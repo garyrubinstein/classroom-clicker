@@ -16,7 +16,7 @@ from datetime import datetime
 # Features: Dynamic QR Code scanning pass + explicit cache clear eviction logic.
 # Layout Fix 1: Pinned QR Code generation directly into the sidebar panel.
 # Layout Fix 2: Unconditional Phone Simulator layout placement at the bottom
-#              so it never disappears or crashes on zero-state initial loads.
+#               so it never disappears or crashes on zero-state initial loads.
 # Engine Fix: Full execution of local Streamlit-side answer key validation matching.
 # ==============================================================================
 
@@ -204,7 +204,7 @@ if st.session_state.active_session_id != "None":
     img = qr.make_image(fill_color="black", back_color="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    st.sidebar.image(buf.getvalue(), use_container_width=True)
+    st.sidebar.image(buf.getvalue(), width=280)
 
 # Generate fallback system tracking parameters
 if not answers_data.empty and "QUESTION" in answers_data.columns:
@@ -224,8 +224,12 @@ else:
         st.title("🎯 Classroom Metrics Console")
         st.info("Waiting for incoming responses... Submit answers via the bottom-docked simulator tool.")
     else:
-        all_data_df["session_id"] = all_data_df["session_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        df = all_data_df[all_data_df["session_id"] == str(st.session_state.active_session_id).strip()].copy()
+        # Robust string normalization block to instantly align data types
+        all_data_df["session_id"] = all_data_df["session_id"].astype(str)
+        all_data_df["session_id"] = all_data_df["session_id"].str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        teacher_session_target = str(st.session_state.active_session_id).strip()
+        df = all_data_df[all_data_df["session_id"] == teacher_session_target].copy()
         
         if df.empty:
             st.title("🎯 Classroom Metrics Console")
@@ -348,7 +352,7 @@ with st.expander("📱 BOTTOM DOCK: RUNTIME STUDENT PHONE SIMULATOR", expanded=T
     with col_sim4:
         sim_ans = st.number_input("Input Raw Answer Value", value=0.0, step=0.1)
         
-    if st.button("🚀 Emit Webhook Submission to Google Sheet", use_container_width=True):
+    if st.button("🚀 Emit Webhook Submission to Google Sheet", width='stretch'):
         if st.session_state.active_session_id == "None":
             st.error("Submission blocked: No active session running.")
         elif str(student_code_input).strip() != str(st.session_state.active_session_id).strip():
@@ -367,7 +371,7 @@ with st.expander("📱 BOTTOM DOCK: RUNTIME STUDENT PHONE SIMULATOR", expanded=T
             timestamp_payload = {
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                 "period": str(st.session_state.active_assignment), 
-                "session_id": int(st.session_state.active_session_id), 
+                "session_id": str(st.session_state.active_session_id).strip(), 
                 "student_id": str(sim_id_input).strip(),
                 "question": str(sim_q), 
                 "answer": float(sim_ans), 
