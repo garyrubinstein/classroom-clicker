@@ -12,13 +12,11 @@ from datetime import datetime
 # ==============================================================================
 # 📋 PROJECT VERSION LOG
 # ==============================================================================
-# Requested Version Name: app32.py (Unified Core Blueprint - Final Fixed)
+# Requested Version Name: app32.py (Unified Core Blueprint - Diagnostic Edition)
 # Features: Dynamic QR Code scanning pass + explicit cache clear eviction logic.
 # Layout Fix 1: Pinned QR Code generation directly into the sidebar panel.
-# Layout Fix 2: Unconditional Phone Simulator layout placement at the bottom
-#               so it never disappears or crashes on zero-state initial loads.
-# Engine Fix: Combined positional tab access with robust name-based column matching
-#             to eliminate tab-naming discrepancies entirely.
+# Layout Fix 2: Unconditional Phone Simulator layout placement at the bottom.
+# Diagnostic addition: Included an open `st.dataframe` window to view raw responses.
 # ==============================================================================
 
 st.set_page_config(page_title="Classroom Clicker Analytics Engine (app32)", layout="wide")
@@ -102,14 +100,12 @@ def load_all_data_via_direct_bypass(clear_cache=False):
         xl = pd.ExcelFile(xl_url)
         
         try:
-            # Fallback strategy: try explicitly named tab first, otherwise grab the very first sheet tab index
             if "responses" in xl.sheet_names:
                 raw_resp = xl.parse(sheet_name="responses")
             else:
                 raw_resp = xl.parse(sheet_name=xl.sheet_names[0])
             
             if not raw_resp.empty:
-                # Force all column headers to be clean, lowercase strings with no spaces
                 raw_resp.columns = [str(c).strip().lower().replace(" ", "_") for c in raw_resp.columns]
                 
                 working_df = pd.DataFrame()
@@ -117,7 +113,6 @@ def load_all_data_via_direct_bypass(clear_cache=False):
                 working_df["period"] = raw_resp["period"] if "period" in raw_resp.columns else raw_resp.iloc[:, 1]
                 working_df["session_id"] = raw_resp["session_id"] if "session_id" in raw_resp.columns else raw_resp.iloc[:, 2]
                 
-                # Dynamic matching for Student ID text header name variations
                 id_col = [c for c in raw_resp.columns if "student" in c or "id" in c]
                 id_col = id_col[0] if id_col else raw_resp.columns[3]
                 
@@ -194,7 +189,6 @@ if st.sidebar.button("🚀 Start New Session"):
 
 st.sidebar.info(f"**Room Status:** Active\n\n**Join Code:** {st.session_state.active_session_id}")
 
-# --- PINNED SIDEBAR QR CODE GENERATION ENGINE ---
 if st.session_state.active_session_id != "None":
     st.sidebar.markdown("---")
     st.sidebar.markdown("<div style='text-align: center; font-weight: bold;'>📱 Scan to Join Room</div>", unsafe_allow_html=True)
@@ -209,7 +203,6 @@ if st.session_state.active_session_id != "None":
     img.save(buf, format="PNG")
     st.sidebar.image(buf.getvalue(), width=280)
 
-# Generate fallback system tracking parameters
 if not answers_data.empty and "QUESTION" in answers_data.columns:
     runtime_key = dict(zip(answers_data["QUESTION"], pd.to_numeric(answers_data[st.session_state.active_assignment], errors='coerce').fillna(0.0)))
     sorted_questions = sorted(list(runtime_key.keys()), key=lambda x: int(re.findall(r'\d+', x)[0])) if runtime_key else ["Q1"]
@@ -223,19 +216,23 @@ if st.session_state.active_session_id == "None":
     st.title("🎯 Classroom Metrics Console")
     st.warning("⚠️ Dashboard Offline. Start a session in the sidebar control panel to begin.")
 else:
+    st.title("🎯 Classroom Metrics Console")
+    
+    # 🔍 UNCONDITIONAL LIVE DIAGNOSTIC STREAM 
+    st.markdown("### 🔍 Live Cloud Data Stream Debug")
+    if not all_data_df.empty:
+        st.dataframe(all_data_df.head(10))
+    else:
+        st.info("The spreadsheet object returned from the cloud is currently empty.")
+
     if all_data_df.empty:
-        st.title("🎯 Classroom Metrics Console")
         st.info("Waiting for incoming responses... Submit answers via the bottom-docked simulator tool.")
     else:
-        # Robust string normalization block to instantly align data types
-        all_data_df["session_id"] = all_data_df["session_id"].astype(str)
-        all_data_df["session_id"] = all_data_df["session_id"].str.replace(r'\.0$', '', regex=True).str.strip()
-        
+        all_data_df["session_id"] = all_data_df["session_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         teacher_session_target = str(st.session_state.active_session_id).strip()
         df = all_data_df[all_data_df["session_id"] == teacher_session_target].copy()
         
         if df.empty:
-            st.title("🎯 Classroom Metrics Console")
             st.info(f"Session initialized. Join Code: **{st.session_state.active_session_id}**")
         else:
             df["is_correct"] = df["is_correct"].astype(str).str.upper().str.strip() == "TRUE"
@@ -272,7 +269,7 @@ else:
                 })
             
             final_students_df = pd.DataFrame(processed_records)
-            st.title(f"Classroom Track: {st.session_state.active_period} (Code: {st.session_state.active_session_id})")
+            st.markdown(f"## Classroom Track: {st.session_state.active_period} (Code: {st.session_state.active_session_id})")
             
             tab_teacher, tab_student = st.tabs(["👨‍🏫 Teacher View", "👨‍🎓 Student View"])
 
@@ -343,7 +340,7 @@ else:
                 grid_html += "</div>"
                 st.markdown(grid_html, unsafe_allow_html=True)
 
-# --- UNCONDITIONAL EXPANDER OUTSIDE BLOCK: ALWAYS VISIBLE TO PREVENT HIDDEN CRASHES ---
+# --- UNCONDITIONAL EXPANDER OUTSIDE BLOCK ---
 st.markdown("<br><br><br><hr>", unsafe_allow_html=True)
 with st.expander("📱 BOTTOM DOCK: RUNTIME STUDENT PHONE SIMULATOR", expanded=True):
     col_sim1, col_sim2, col_sim3, col_sim4 = st.columns(4)
@@ -363,7 +360,6 @@ with st.expander("📱 BOTTOM DOCK: RUNTIME STUDENT PHONE SIMULATOR", expanded=T
         elif str(student_code_input).strip() != str(st.session_state.active_session_id).strip():
             st.error("Submission blocked: Verification Room Code Mismatch.")
         else:
-            # === DECOUPLED FAIL-SAFE GRADING EVALUATION ===
             target_correct_answer = runtime_key.get(sim_q, None) if 'runtime_key' in locals() else None
             
             if target_correct_answer is not None:
@@ -375,19 +371,4 @@ with st.expander("📱 BOTTOM DOCK: RUNTIME STUDENT PHONE SIMULATOR", expanded=T
             timestamp_payload = {
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                 "period": str(st.session_state.active_assignment), 
-                "session_id": str(st.session_state.active_session_id).strip(), 
-                "student_id": str(sim_id_input).strip(),
-                "question": str(sim_q), 
-                "answer": float(sim_ans), 
-                "is_correct": bool(is_correct)
-            }
-            
-            try:
-                response = requests.post(st.secrets["connections"]["gsheets"]["macro_url"], json=timestamp_payload)
-                if response.status_code == 200:
-                    st.success("Submission sent! Updating live data...")
-                    load_all_data_via_direct_bypass(clear_cache=True)
-                    time.sleep(0.5)
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Routing Pipeline Failure: {e}")
+                "
