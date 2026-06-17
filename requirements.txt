@@ -3,4 +3,4 @@ pandas
 numpy
 requests
 qrcode
-pillow
+openpyxl
