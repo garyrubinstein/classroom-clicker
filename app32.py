@@ -220,6 +220,9 @@ if st.session_state.active_session_id == "None":
     st.title("🎯 Classroom Metrics Console")
     st.warning("⚠️ Dashboard Offline. Start a session in the sidebar control panel to begin.")
 else:
+  # Temporary Diagnostic Window
+    st.write("### 🔍 Live Cloud Data Stream Debug")
+    st.dataframe(all_data_df.head(5))
     if all_data_df.empty:
         st.title("🎯 Classroom Metrics Console")
         st.info("Waiting for incoming responses... Submit answers via the bottom-docked simulator tool.")
