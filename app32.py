@@ -18,6 +18,7 @@ from datetime import datetime
 # Layout Fix 2: Unconditional Phone Simulator layout placement at the bottom
 #               so it never disappears or crashes on zero-state initial loads.
 # Engine Fix: Explicit robust text-header column mapping to bypass strict positional array bugs.
+# Syntax Fix: Standardized button container argument parameters.
 # ==============================================================================
 
 st.set_page_config(page_title="Classroom Clicker Analytics Engine (app32)", layout="wide")
@@ -182,4 +183,57 @@ period_input = st.sidebar.text_input("Enter Period Number", value="Period 1")
 selected_assignment = st.sidebar.selectbox("Select Active Assignment Key", options=available_assignments)
 
 if st.sidebar.button("🚀 Start New Session"):
-    st.session_state.active_session_id = str(random.
+    st.session_state.active_session_id = str(random.randint(1000, 9999))
+    st.session_state.active_period = period_input
+    st.session_state.active_assignment = selected_assignment
+    load_all_data_via_direct_bypass(clear_cache=True)
+
+st.sidebar.info(f"**Room Status:** Active\n\n**Join Code:** {st.session_state.active_session_id}")
+
+# --- PINNED SIDEBAR QR CODE GENERATION ENGINE ---
+if st.session_state.active_session_id != "None":
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("<div style='text-align: center; font-weight: bold;'>📱 Scan to Join Room</div>", unsafe_allow_html=True)
+    
+    qr_data = f"Code: {st.session_state.active_session_id}"
+    qr = qrcode.QRCode(version=1, box_size=6, border=2)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    st.sidebar.image(buf.getvalue(), width=280)
+
+# Generate fallback system tracking parameters
+if not answers_data.empty and "QUESTION" in answers_data.columns:
+    runtime_key = dict(zip(answers_data["QUESTION"], pd.to_numeric(answers_data[st.session_state.active_assignment], errors='coerce').fillna(0.0)))
+    sorted_questions = sorted(list(runtime_key.keys()), key=lambda x: int(re.findall(r'\d+', x)[0])) if runtime_key else ["Q1"]
+else:
+    runtime_key = {"Q1": 2.0, "Q2": 7.5, "Q3": 100.0, "Q4": 0.25, "Q5": 13.0}
+    sorted_questions = ["Q1", "Q2", "Q3", "Q4", "Q5"]
+tot_q_count = len(sorted_questions)
+
+# --- CORE VISUAL DASHBOARD MATRIX ---
+if st.session_state.active_session_id == "None":
+    st.title("🎯 Classroom Metrics Console")
+    st.warning("⚠️ Dashboard Offline. Start a session in the sidebar control panel to begin.")
+else:
+    if all_data_df.empty:
+        st.title("🎯 Classroom Metrics Console")
+        st.info("Waiting for incoming responses... Submit answers via the bottom-docked simulator tool.")
+    else:
+        # Robust string normalization block to instantly align data types
+        all_data_df["session_id"] = all_data_df["session_id"].astype(str)
+        all_data_df["session_id"] = all_data_df["session_id"].str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        teacher_session_target = str(st.session_state.active_session_id).strip()
+        df = all_data_df[all_data_df["session_id"] == teacher_session_target].copy()
+        
+        if df.empty:
+            st.title("🎯 Classroom Metrics Console")
+            st.info(f"Session initialized. Join Code: **{st.session_state.active_session_id}**")
+        else:
+            df["is_correct"] = df["is_correct"].astype(str).str.upper().str.strip() == "TRUE"
+            df["student_id"] = df["student_id"].astype(str).str.strip()
+            clean_df = df.drop_duplicates(subset=
