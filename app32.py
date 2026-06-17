@@ -101,7 +101,7 @@ def load_all_data_via_direct_bypass(clear_cache=False):
         xl = pd.ExcelFile(xl_url)
         
         try:
-            raw_resp = xl.parse(sheet_name=xl.sheet_names[0])
+            raw_resp = xl.parse(sheet_name="responses")
             actual_headers = [str(h).strip().lower() for h in raw_resp.columns]
             
             id_index = 3 
