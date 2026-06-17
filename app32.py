@@ -371,4 +371,19 @@ with st.expander("📱 BOTTOM DOCK: RUNTIME STUDENT PHONE SIMULATOR", expanded=T
             timestamp_payload = {
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                 "period": str(st.session_state.active_assignment), 
-                "
+                "session_id": str(st.session_state.active_session_id).strip(), 
+                "student_id": str(sim_id_input).strip(),
+                "question": str(sim_q), 
+                "answer": float(sim_ans), 
+                "is_correct": bool(is_correct)
+            }
+            
+            try:
+                response = requests.post(st.secrets["connections"]["gsheets"]["macro_url"], json=timestamp_payload)
+                if response.status_code == 200:
+                    st.success("Submission sent! Updating live data...")
+                    load_all_data_via_direct_bypass(clear_cache=True)
+                    time.sleep(0.5)
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Routing Pipeline Failure: {e}")
