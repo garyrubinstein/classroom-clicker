@@ -1,17 +1,3 @@
-The fact that it isn’t crashing means the entire Python engine is structurally sound and completely error-free now.
-
-If the main window is still showing nothing (or just the fallback warning text), it means all_data_df.empty is returning True. The app is opening your Google Sheet file, but it cannot find a sheet named exactly responses (all lowercase), so it defaults to an empty dataset.
-
-Let's fix this once and for all by making the script look for your first tab regardless of what it is named, while keeping our robust column mapping intact.
-
-🛠️ What to do now:
-Go to your repository on GitHub, open app32.py, and click the pencil icon (✏️) to edit.
-
-Select everything in the file and delete it.
-
-Copy this complete block below, paste it in, and click the green Commit changes button.
-
-Python
 import streamlit as st
 import pandas as pd
 import numpy as np
