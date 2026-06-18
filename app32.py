@@ -84,17 +84,34 @@ with c2:
     st.metric("Target Assignment Key", selected_key)
 
 
+
+
 # ==============================================================================
-# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (LOOP LOCK FIX)
+# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (STABLE LAYOUT VERSION)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 👥 Active Student Scoreboard")
 
-# Initialize persistent memory storage for row count tracking outside the fragment
+# Create stable UI placeholders that stay on screen even when the background is idle
+status_placeholder = st.empty()
+info_placeholder = st.empty()
+matrix_placeholder = st.empty()
+scoreboard_placeholder = st.empty()
+log_placeholder = st.empty()
+
+# Initialize persistent memory storage for tracking data changes across loops
 if "last_processed_row_count" not in st.session_state:
     st.session_state.last_processed_row_count = 0
+if "cached_summary_data" not in st.session_state:
+    st.session_state.cached_summary_data = None
+if "cached_matrix_data" not in st.session_state:
+    st.session_state.cached_matrix_data = None
+if "cached_target_code" not in st.session_state:
+    st.session_state.cached_target_code = "None"
+if "cached_logs" not in st.session_state:
+    st.session_state.cached_logs = []
 
-# 🔄 Smart Background Fragment: Always runs to completion to keep the background timer ticking
+# 🔄 Stable Background Fragment: Keeps running, updates memory, and maintains layout
 @st.fragment(run_every=5)
 def refresh_scoreboard_panel():
     if not found_sheet_url:
@@ -112,15 +129,15 @@ def refresh_scoreboard_panel():
         current_row_count = len(raw_df)
         current_time_str = datetime.datetime.now().strftime("%H:%M:%S")
         
-        # 🚦 CHANGE DETECTOR GUARD: Split layout cleanly so it never hard-kills the background loop
+        # Checking if data has actually changed
         if current_row_count == st.session_state.last_processed_row_count and st.session_state.last_processed_row_count > 0:
-            st.caption(f"💤 **Dashboard Idling:** Checked at `{current_time_str}` — No new clicker rows detected in database.")
+            status_placeholder.caption(f"💤 **Dashboard Idling:** Checked at `{current_time_str}` — No new clicker rows detected in database.")
         else:
-            # Update tracking state memory when a change is confirmed or initialized
+            # New data found! Update state tracking variables
             st.session_state.last_processed_row_count = current_row_count
-
+            
             forensics_logs = []
-            forensics_logs.append("🔍 --- SHEET CHANGE DETECTED: RUNNING CALCULATIONS ---")
+            forensics_logs.append("🔍 --- SHEET CHANGE DETECTED: PROCESSING RUN ---")
             forensics_logs.append(f"📊 New Database Row Count: {current_row_count}")
 
             # Roster Name Mapping Engine
@@ -133,10 +150,20 @@ def refresh_scoreboard_panel():
                     if raw_id.endswith('.0'): raw_id = raw_id[:-2]
                     roster_dict[raw_id] = str(r.iloc[1]).strip()
             except:
-                pass
+                try:
+                    fallback_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=answers&cb={cache_buster}"
+                    fb_df = pd.read_csv(fallback_url)
+                    for _, r in fb_df.iterrows():
+                        raw_id = str(r.iloc[0]).strip()
+                        if raw_id.endswith('.0'): raw_id = raw_id[:-2]
+                        roster_dict[raw_id] = str(r.iloc[1]).strip()
+                except:
+                    pass
 
             if raw_df.empty:
-                st.info("No data found in the spreadsheet yet.")
+                st.session_state.cached_target_code = "None"
+                st.session_state.cached_matrix_data = None
+                st.session_state.cached_summary_data = None
             else:
                 # Auto-Detect Active Session Code
                 last_row_session = str(raw_df.iloc[-1, 2]).strip()
@@ -147,9 +174,9 @@ def refresh_scoreboard_panel():
                     target_code = last_row_session
                 else:
                     target_code = str(st.session_state.active_code).strip()
-
-                st.caption(f"⚡ **Live Dashboard Status:** Table recalculated at `{current_time_str}` (New data found!)")
-                st.info(f"📊 Displaying Live Statistics for Session Code: **{target_code}**")
+                
+                st.session_state.cached_target_code = target_code
+                status_placeholder.caption(f"⚡ **Live Dashboard Status:** Table recalculated at `{current_time_str}` (New data loaded!)")
 
                 # Data Filtering
                 session_col = raw_df.iloc[:, 2].astype(str).str.strip()
@@ -163,7 +190,8 @@ def refresh_scoreboard_panel():
                     filtered_df = filtered_df[~room_set_mask]
                 
                 if filtered_df.empty:
-                    st.info(f"No student clicks recorded yet for Session Code **{target_code}**.")
+                    st.session_state.cached_matrix_data = "EMPTY"
+                    st.session_state.cached_summary_data = None
                 else:
                     filtered_df['s_id'] = filtered_df.iloc[:, 3].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
                     filtered_df['q_id'] = filtered_df.iloc[:, 4].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
@@ -171,9 +199,8 @@ def refresh_scoreboard_panel():
                     
                     clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
                     
-                    # Render Row Evaluation Diagnostic Grid
-                    st.write("#### 🔍 Live Response Matrix")
-                    debug_matrix = pd.DataFrame({
+                    # Store diagnostic grid data frame in cache memory
+                    st.session_state.cached_matrix_data = pd.DataFrame({
                         "Student ID": clean_df['s_id'],
                         "Name": clean_df['s_id'].map(roster_dict),
                         "Question": clean_df['q_id'],
@@ -181,29 +208,39 @@ def refresh_scoreboard_panel():
                         "Sheet Status": clean_df.iloc[:, 6].astype(str),
                         "Dashboard Calculation": clean_df['is_true'].map({True: "✅ CORRECT", False: "❌ WRONG"})
                     })
-                    st.dataframe(debug_matrix, use_container_width=True)
-                    st.markdown("---")
 
-                    # Calculate metrics
+                    # Calculate and store aggregated student metric summaries
                     summary = clean_df.groupby("s_id").agg(correct=("is_true", "sum"), total=("q_id", "nunique")).reset_index()
-                    
+                    summary_list = []
                     for _, row in summary.iterrows():
                         student_key = str(row['s_id'])
                         student_display_name = roster_dict.get(student_key, student_key)
                         total_answered = int(row["total"])
                         correct_answers = int(row["correct"])
                         pct = int((correct_answers / total_answered) * 100) if total_answered > 0 else 0
-                        st.markdown(f"👤 **{student_display_name}** — Accuracy: `{pct}%` ({correct_answers}/{total_answered} correct)")
-                        
-            with st.expander("📝 View Background Sync Engine Log", expanded=False):
-                for log in forensics_logs:
-                    st.text(log)
-                
-    except Exception as e:
-        st.error(f"Scoreboard auto-refresh cycle encountered an error: {e}")
+                        summary_list.append((student_display_name, pct, correct_answers, total_answered))
+                    
+                    st.session_state.cached_summary_data = summary_list
+            
+            st.session_state.cached_logs = forensics_logs
 
-# Run the repeating fragment interface engine cleanly
-refresh_scoreboard_panel()
+        # ==============================================================================
+        # 🏛️ RENDERING ENGINE (Runs EVERY pass using values safely kept in memory)
+        # ==============================================================================
+        info_placeholder.info(f"📊 Displaying Live Statistics for Session Code: **{st.session_state.cached_target_code}**")
+        
+        # Redraw Response Matrix Window
+        if isinstance(st.session_state.cached_matrix_data, pd.DataFrame):
+            with matrix_placeholder.container():
+                st.write("#### 🔍 Live Response Matrix")
+                st.dataframe(st.session_state.cached_matrix_data, use_container_width=True)
+                st.markdown("---")
+        elif st.session_state.cached_matrix_data == "EMPTY":
+            matrix_placeholder.warning(f"No student clicks recorded yet for Session Code **{st.session_state.cached_target_code}**.")
+        else:
+            matrix_placeholder.info("Awaiting structural incoming database streaming elements...")
+
+        # Redraw Student
 
 
 # ==============================================================================
