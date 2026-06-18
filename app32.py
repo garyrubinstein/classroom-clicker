@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Auto-install missing packages on the fly to prevent hair-pulling errors
+# 🛡️ Force-install required libraries right at startup to prevent environment crashes
 try:
     import gspread
     from oauth2client.service_account import ServiceAccountCredentials
@@ -15,99 +15,136 @@ import pandas as pd
 import datetime
 import random
 
-# App Setup
-st.set_page_config(page_title="Clicker Teacher Dashboard", layout="wide")
+# Core App Layout Setup
+st.set_page_config(page_title="Clicker Dashboard", layout="wide")
+st.title("🍎 Classroom Response Dashboard")
 
-# Safe log initializer
-if "app_logs" not in st.session_state:
-    st.session_state.app_logs = []
-
-def add_log(msg):
-    st.session_state.app_logs.append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}")
-
-# Fetch Cloud Data
-@st.cache_data(ttl=3)
-def fetch_data():
+# 📡 Robust Cloud Data Grabber
+@st.cache_data(ttl=2)
+def fetch_cloud_data():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         client = gspread.authorize(creds)
         workbook = client.open_by_key(st.secrets["google_sheets"]["sheet_id"])
         
-        return (pd.DataFrame(workbook.worksheet("responses").get_all_records()), 
-                pd.DataFrame(workbook.worksheet("roster").get_all_records()), 
-                workbook)
-    except Exception as e:
-        return pd.DataFrame(), pd.DataFrame(), None
-
-all_data_df, roster_data, raw_workbook = fetch_data()
-
-# Sidebar Room Controls
-st.sidebar.title("🎮 Room Controls")
-if st.sidebar.button("🚀 Start New Session", use_container_width=True):
-    new_code = str(random.randint(1000, 9999))
-    st.session_state.active_session_id = new_code
-    if raw_workbook is not None:
-        try:
-            raw_workbook.worksheet("active_session").clear()
-            raw_workbook.worksheet("active_session").append_row(["session_id", "active_assignment"])
-            raw_workbook.worksheet("active_session").append_row([new_code, "quiz_1"])
+        raw_rows = workbook.worksheet("responses").get_all_values()
+        if not raw_rows:
+            return pd.DataFrame(), workbook
             
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            raw_workbook.worksheet("responses").append_row([timestamp, "quiz_1", new_code, "SERVER", "ROOM_SET", "0", "TRUE"])
-            st.cache_data.clear()
-            st.rerun()
-        except:
-            pass
-
-if "active_session_id" not in st.session_state:
-    st.session_state.active_session_id = "3665" # Default backup code
-
-st.sidebar.metric("🔑 Join Code:", st.session_state.active_session_id)
-
-# Main Dashboard Engine
-st.title("🍎 Classroom Response Dashboard")
-
-if all_data_df.empty:
-    st.info("Awaiting cloud data connection...")
-else:
-    # Ensure standard positional columns to prevent data swapping
-    if all_data_df.shape[1] >= 7:
-        all_data_df.columns = ['date', 'period', 'session_id', 'student_id', 'question', 'answer', 'is_correct'] + list(all_data_df.columns[7:])
-    
-    # Filter for target session rows only
-    target_session = str(st.session_state.active_session_id).strip()
-    df = all_data_df[all_data_df["session_id"].astype(str).str.contains(target_session, na=False)].copy()
-    df = df[df["question"].astype(str).str.upper() != "ROOM_SET"]
-
-    if df.empty:
-        st.info(f"Join Code: {st.session_state.active_session_id} is active. Waiting for student clicks...")
-    else:
-        # Standardize true/false tracking indicators
-        df["is_correct"] = df["is_correct"].astype(str).str.upper().str.strip() == "TRUE"
-        df["student_id"] = df["student_id"].astype(str).str.strip()
+        headers = [str(h).strip().lower() for h in raw_rows[0]]
+        data_rows = raw_rows[1:]
+        df = pd.DataFrame(data_rows)
         
-        # Pull most recent clicks
-        clean_df = df.drop_duplicates(subset=["student_id", "question"], keep="last")
-        
-        # Calculate summary metrics per student
-        summary = clean_df.groupby("student_id").agg(
-            correct=("is_correct", "sum"),
-            total=("question", "nunique")
-        ).reset_index()
-        
-        # Display cosmetic layout cards
-        st.write("### 👥 Active Student Summaries")
-        cols = st.columns(4)
-        for idx, row in summary.iterrows():
-            with cols[idx % 4]:
-                pct = int((row["correct"] / row["total"]) * 100) if row["total"] > 0 else 0
-                bg = "#2ecc71" if pct >= 80 else "#f1c40f" if pct >= 60 else "#e74c3c"
+        if df.shape[1] < len(headers):
+            headers = headers[:df.shape[1]]
+        elif df.shape[1] > len(headers):
+            for i in range(df.shape[1] - len(headers)):
+                headers.append(f"col_{i}")
                 
-                st.markdown(f"""
-                <div style="background:{bg}; color:white; padding:15px; border-radius:10px; margin-bottom:15px; text-align:center;">
-                    <div style="font-size:18px; font-weight:bold;">Student {row['student_id']}</div>
-                    <div style="font-size:28px; font-weight:bold; margin:5px 0;">{pct}%</div>
-                    <div style="font-size:12px;">🎯 {row['correct']} / {row['total']} Correct</div>
-                </div>
-                """, unsafe_allow_html=True)
+        df.columns = headers
+        return df, workbook
+    except Exception as e:
+        st.sidebar.error(f"Cloud syncing paused: {str(e)}")
+        return pd.DataFrame(), None
+
+all_data_df, raw_workbook = fetch_cloud_data()
+
+# 🎮 Sidebar Controls
+st.sidebar.title("🎮 Room Controls")
+if "active_session_id" not in st.session_state:
+    st.session_state.active_session_id = "3665"
+
+user_code = st.sidebar.text_input("Active Session Join Code:", value=st.session_state.active_session_id)
+st.session_state.active_session_id = user_code.strip()
+
+if st.sidebar.button("🧹 Force Refresh Sheet Data", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
+# Global variables for the debugging panel
+debug_total_rows = len(all_data_df) if not all_data_df.empty else 0
+debug_matched_rows = 0
+debug_columns = list(all_data_df.columns) if not all_data_df.empty else []
+debug_unique_sessions = []
+
+# 📊 Render Summary Engine
+if all_data_df.empty:
+    st.info("Awaiting structural connection to Google Sheets...")
+else:
+    working_df = all_data_df.copy()
+    
+    if working_df.shape[1] >= 7:
+        # Standardize fallback headers internally just to run math securely
+        working_df.columns = ['date', 'period', 'session_id', 'student_id', 'question', 'answer', 'is_correct'] + list(working_df.columns[7:])
+        
+        # Populate debug list with unique sessions found in raw data
+        debug_unique_sessions = working_df['session_id'].astype(str).str.strip().unique().tolist()
+        
+        target_session = str(st.session_state.active_session_id).strip()
+        session_col = working_df['session_id'].astype(str).str.strip()
+        
+        filtered_df = working_df[session_col.str.contains(target_session, na=False)].copy()
+        debug_matched_rows = len(filtered_df)
+        
+        filtered_df = filtered_df[filtered_df['question'].astype(str).str.upper() != "ROOM_SET"]
+        
+        if filtered_df.empty:
+            st.info(f"Join Code **{st.session_state.active_session_id}** is active. Send a click response from a student remote to display data.")
+        else:
+            filtered_df['s_id'] = filtered_df['student_id'].astype(str).str.strip()
+            filtered_df['q_id'] = filtered_df['question'].astype(str).str.strip()
+            filtered_df['correct_bool'] = filtered_df['is_correct'].astype(str).str.upper().str.strip() == "TRUE"
+            
+            clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
+            
+            summary = clean_df.groupby("s_id").agg(
+                correct_count=("correct_bool", "sum"),
+                total_answered=("q_id", "nunique")
+            ).reset_index()
+            
+            st.write(f"### 👥 Active Performance Layout (Session: {st.session_state.active_session_id})")
+            
+            cols = st.columns(4)
+            for idx, row in summary.iterrows():
+                with cols[idx % 4]:
+                    total = row["total_answered"]
+                    correct = row["correct_count"]
+                    pct = int((correct / total) * 100) if total > 0 else 0
+                    bg_color = "#2ecc71" if pct >= 80 else "#f1c40f" if pct >= 60 else "#e74c3c"
+                    
+                    st.markdown(f"""
+                    <div style="background:{bg_color}; color:white; padding:18px; border-radius:10px; margin-bottom:15px; text-align:center; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+                        <div style="font-size:16px; opacity:0.9; font-weight:bold;">STUDENT</div>
+                        <div style="font-size:22px; font-weight:bold; margin-bottom:5px;">👤 {row['s_id']}</div>
+                        <div style="font-size:36px; font-weight:bold; margin:5px 0;">{pct}%</div>
+                        <div style="font-size:13px; opacity:0.9;">🎯 {correct} / {total} Solved</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+    else:
+        st.error("The linked Google Sheet does not contain enough data columns.")
+
+# ==============================================================================
+# 🛠️ LIVE ON-PAGE DIAGNOSTIC INSPECTOR (UNCOLLAPSED FOR EASY SHOWING)
+# ==============================================================================
+st.markdown("---")
+st.markdown("### 🛠️ Real-Time System Diagnostic Log")
+st.caption("Use this area to verify exactly how data is routing from student clickers into the server memory container.")
+
+d_col1, d_col2, d_col3 = st.columns(3)
+with d_col1:
+    st.metric("Total Rows in Sheets Tab", debug_total_rows)
+with d_col2:
+    st.metric(f"Rows Matching Code '{st.session_state.active_session_id}'", debug_matched_rows)
+with d_col3:
+    st.metric("Detected Sheet Columns", len(debug_columns))
+
+st.write("**Raw Detected Spreadsheet Column Layout Headers:**")
+st.code(str(debug_columns))
+
+st.write("**All Unique Session Identifiers Active inside Google Sheets right now:**")
+st.code(", ".join([f"'{s}'" for s in debug_unique_sessions]) if debug_unique_sessions else "None Found")
+
+if debug_matched_rows > 0:
+    st.write("**Preview of Raw Rows Filtered for Current Room:**")
+    st.dataframe(filtered_df.head(5), use_container_width=True)
