@@ -6,16 +6,14 @@ import re
 from datetime import datetime
 
 # ==============================================================================
-# 📋 PROJECT VERSION LOG
+# [SECTION 01: PROJECT CORE INITIALIZATION & CONFIG]
 # ==============================================================================
-# Version Name: clicker.py (Student Qwizdom Clicker - Iteration 5: Complete UX)
-# Features: Welcome message, instant feedback (with answer reveal on wrong),
-#           dynamic question removal, and running accuracy score calculation.
+# Version Name: clicker.py (Sectioned Student Remote - Complete UX)
+# Features: Segmented structure blocks, persistent session state caches.
 # ==============================================================================
 
 st.set_page_config(page_title="Student Qwizdom Remote", layout="centered")
 
-# Initialize persistent session states
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if "student_id" not in st.session_state: st.session_state.student_id = ""
 if "session_id" not in st.session_state: st.session_state.session_id = ""
@@ -42,6 +40,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ==============================================================================
+# [SECTION 02: CLOUD SYNC & CREDENTIAL VERIFICATION ENGINE]
+# ==============================================================================
 def verify_and_pull_grading_rules(input_session, input_id):
     try:
         sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
@@ -52,7 +53,7 @@ def verify_and_pull_grading_rules(input_session, input_id):
         xl_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
         xl = pd.ExcelFile(xl_url)
         
-        # 1. Verify Student ID against roster tab
+        # 1. Verify Student ID against roster tab with string stabilization
         student_name_found = f"Student ({input_id})"
         if "roster" in xl.sheet_names:
             raw_roster = xl.parse(sheet_name="roster")
@@ -61,8 +62,10 @@ def verify_and_pull_grading_rules(input_session, input_id):
             name_col = [c for c in raw_roster.columns if "name" in c or "student" in c and c != id_col]
             
             if id_col and name_col:
-                raw_roster[id_col[0]] = raw_roster[id_col[0]].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                match_row = raw_roster[raw_roster[id_col[0]] == str(input_id).strip()]
+                raw_roster[id_col[0]] = raw_roster[id_col[0]].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                clean_input_id = str(input_id).strip().replace(".0", "")
+                
+                match_row = raw_roster[raw_roster[id_col[0]] == clean_input_id]
                 if match_row.empty:
                     return False, "ID not found in active roster.", ""
                 student_name_found = str(match_row.iloc[0][name_col[0]]).strip()
@@ -84,17 +87,15 @@ def verify_and_pull_grading_rules(input_session, input_id):
                 if "period" in raw_resp.columns:
                     detected_assignment = str(latest_row["period"]).strip()
 
-            # Find past questions answered *by this student in this specific session* to recover state if they refresh
+            # Recover historical activity tracking state if student refreshes device
             raw_resp["session_id"] = raw_resp["session_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             raw_resp["student_id"] = raw_resp["student_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             
             past_matches = raw_resp[(raw_resp["session_id"] == str(input_session).strip()) & (raw_resp["student_id"] == str(input_id).strip())]
             st.session_state.answered_questions = set(past_matches["question"].astype(str).tolist())
-            
-            # Reconstruct past grades for the running score display
             st.session_state.past_submissions = past_matches["is_correct"].astype(bool).tolist()
         
-        # 3. Cache Answer Key
+        # 3. Cache Answer Key to Local Device Memory
         parsed_key = {}
         if "answers" in xl.sheet_names:
             answers_df = xl.parse(sheet_name="answers")
@@ -110,7 +111,9 @@ def verify_and_pull_grading_rules(input_session, input_id):
     except Exception as e:
         return False, f"Cloud sync failed: {e}", ""
 
-# --- PHASE 1: THE LOCK SCREEN ---
+# ==============================================================================
+# [SECTION 03: VIEWPORT PORTAL A - THE SESSION LOCK SCREEN]
+# ==============================================================================
 if not st.session_state.authenticated:
     st.markdown('<div class="lcd-screen">📟 QWIZDOM REMOTE V1.5<br>STATUS: LOCKED // ENTER ROOM</div>', unsafe_allow_html=True)
     st.title("🔒 Join Classroom Session")
@@ -129,94 +132,9 @@ if not st.session_state.authenticated:
                     st.session_state.session_id = str(room_code).strip()
                     st.session_state.student_id = str(student_id).strip()
                     st.session_state.student_name = s_name
-                    st.session_state.last_feedback = None # Reset feedback on clean login
+                    st.session_state.last_feedback = None
                     st.rerun()
                 else:
                     st.error(f"Access Denied: {msg}")
 
-# --- PHASE 2: ACTIVE REMOTE VIEW ---
-else:
-    # Calculate current accuracy score percentage
-    total_answered = len(st.session_state.past_submissions)
-    total_correct = sum(st.session_state.past_submissions)
-    score_pct = int((total_correct / total_answered) * 100) if total_answered > 0 else 100
-
-    # Build top LCD info board
-    lcd_text = f"📟 RM: {st.session_state.session_id} | KEY: {st.session_state.active_assignment}<br>SCORE: {score_pct}% ({total_correct}/{total_answered})"
-    st.markdown(f'<div class="lcd-screen">{lcd_text}</div>', unsafe_allow_html=True)
-    
-    # Welcome banner matching user name
-    st.markdown(f"### 👋 Welcome, **{st.session_state.student_name}**!")
-    
-    # --- SHOW PREVIOUS SUBMISSION FEEDBACK BOX ---
-    if st.session_state.last_feedback:
-        fb = st.session_state.last_feedback
-        if fb["is_correct"]:
-            st.success(f"🎯 **{fb['question']} Feedback:** Correct! Great job.")
-        else:
-            st.error(f"⚠️ **{fb['question']} Feedback:** Incorrect. Your answer: `{fb['submitted']}`. The correct answer was **{fb['actual']}**.")
-        st.markdown("---")
-
-    # --- DYNAMIC QUESTION DROPDOWN FILTERING ---
-    # Subtract elements already in answered_questions from master list
-    all_q_options = list(st.session_state.answer_key_dict.keys()) if st.session_state.answer_key_dict else [f"Q{i}" for i in range(1, 11)]
-    remaining_q_options = [q for q in all_q_options if q not in st.session_state.answered_questions]
-    
-    if not remaining_q_options:
-        st.balloons()
-        st.success("🎉 Activity Completed! You have answered all questions for this assignment.")
-        st.info("Keep an eye on the front board display to track your team pacing.")
-    else:
-        sim_q = st.selectbox("Select Target Question", options=remaining_q_options)
-        sim_ans = st.number_input("Your Numeric Response Value", value=0.0, step=0.1, key=f"input_{sim_q}")
-        
-        st.markdown("---")
-        col_send, col_exit = st.columns([4, 1])
-        
-        with col_send:
-            if st.button("🚀 TRANSMIT ANSWER", use_container_width=True, type="primary"):
-                correct_ans_target = st.session_state.answer_key_dict.get(sim_q, None)
-                grade_evaluation = bool(np.isclose(sim_ans, correct_ans_target)) if correct_ans_target is not None else False
-                    
-                timestamp_payload = {
-                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                    "period": str(st.session_state.active_assignment), 
-                    "session_id": str(st.session_state.session_id), 
-                    "student_id": str(st.session_state.student_id),
-                    "question": str(sim_q), 
-                    "answer": float(sim_ans), 
-                    "is_correct": grade_evaluation
-                }
-                
-                try:
-                    macro_link = st.secrets["connections"]["gsheets"]["macro_url"]
-                    response = requests.post(macro_link, json=timestamp_payload)
-                    if response.status_code == 200:
-                        # Append performance metrics dynamically to local device tracking
-                        st.session_state.answered_questions.add(sim_q)
-                        st.session_state.past_submissions.append(grade_evaluation)
-                        
-                        # Cache feedback state parameters for the upcoming refresh cycle
-                        st.session_state.last_feedback = {
-                            "question": sim_q,
-                            "is_correct": grade_evaluation,
-                            "submitted": sim_ans,
-                            "actual": correct_ans_target
-                        }
-                        st.rerun()
-                    else:
-                        st.error("Failed to register answer row.")
-                except Exception as e:
-                    st.error(f"Transmission error: {e}")
-                    
-    with col_exit:
-        if st.button("❌ RESET", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.student_id = ""
-            st.session_state.session_id = ""
-            st.session_state.student_name = ""
-            st.session_state.answer_key_dict = {}
-            st.session_state.answered_questions = set()
-            st.session_state.past_submissions = []
-            st.session_state.last_feedback = None
-            st.rerun()
+# =================================
