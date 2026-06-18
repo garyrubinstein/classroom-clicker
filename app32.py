@@ -68,10 +68,8 @@ with c2:
     st.metric("Target Assignment Key", selected_key)
 
 
-
-
 # ==============================================================================
-# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (DECIMAL & VALUE FIX)
+# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (DEEP CELLS INSPECTOR)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 👥 Active Student Scoreboard")
@@ -86,44 +84,36 @@ else:
         raw_df = pd.read_csv(csv_url)
         
         processing_logs = []
-        processing_logs.append("⚙️ Starting Scoreboard Engine calculations...")
+        processing_logs.append("⚙️ Running Scoreboard Engine deep cell scan...")
 
-        # 🤝 ROSTER LOOKUP SYSTEM: Explicitly strip decimals from keys
+        # 🤝 ROSTER LOOKUP SYSTEM
         roster_dict = {}
         try:
             roster_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=roster"
             roster_df = pd.read_csv(roster_url)
             for _, r in roster_df.iterrows():
-                # Force ID to float, then integer, then string to drop trailing decimals safely
                 raw_id = str(r.iloc[0]).strip()
-                if raw_id.endswith('.0'):
-                    raw_id = raw_id[:-2]
+                if raw_id.endswith('.0'): raw_id = raw_id[:-2]
                 roster_dict[raw_id] = str(r.iloc[1]).strip()
-        except Exception as re:
-            processing_logs.append(f"⚠️ Could not pull 'roster' tab directly ({re})")
+        except:
             try:
                 fallback_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=answers"
                 fb_df = pd.read_csv(fallback_url)
                 for _, r in fb_df.iterrows():
                     raw_id = str(r.iloc[0]).strip()
-                    if raw_id.endswith('.0'):
-                        raw_id = raw_id[:-2]
+                    if raw_id.endswith('.0'): raw_id = raw_id[:-2]
                     roster_dict[raw_id] = str(r.iloc[1]).strip()
-            except Exception as ae:
-                processing_logs.append(f"⚠️ Could not pull fallback 'answers' tab names ({ae})")
-
-        processing_logs.append(f"🔑 Cleaned Roster Map inside Memory: {str(roster_dict)}")
+            except:
+                pass
 
         if raw_df.empty:
             st.info("No data found in the spreadsheet yet.")
         else:
             session_col = raw_df.iloc[:, 2].astype(str).str.strip()
-            # Handle case where session code comes in as float decimal from sheets
             if session_col.str.endswith('.0').any():
                 session_col = session_col.apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 
             target_code = str(st.session_state.active_code).strip()
-            
             filtered_df = raw_df[session_col == target_code].copy()
             
             if not filtered_df.empty:
@@ -133,44 +123,52 @@ else:
             if filtered_df.empty:
                 st.info(f"No student clicks recorded yet for Session Code **{target_code}**.")
             else:
-                # Target columns safely by position and strip any trailing floating decimals
+                # Normalize text fields and safely handle trailing floating points
                 filtered_df['s_id'] = filtered_df.iloc[:, 3].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 filtered_df['q_id'] = filtered_df.iloc[:, 4].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 
-                raw_correct_strings = filtered_df.iloc[:, 6].astype(str).unique().tolist()
-                processing_logs.append(f"👀 Logged strings inside row cells: {raw_correct_strings}")
-                
-                # Check for absolute truth values in data row cells
+                # Check absolute evaluation conditions
                 filtered_df['is_true'] = filtered_df.iloc[:, 6].astype(str).str.upper().str.strip().isin(["TRUE", "1", "1.0"])
                 
+                # Deduplicate to evaluate only the final press
                 clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
                 
+                # 🛠️ EXPLICIT VISUAL INSPECTION GRID
+                st.write("#### 🔍 Row-by-Row Evaluation Diagnostic Matrix")
+                st.caption("This shows exactly what text strings Python extracted from each index of your sheet:")
+                
+                debug_matrix = pd.DataFrame({
+                    "Student ID": clean_df['s_id'],
+                    "Name Lookup": clean_df['s_id'].map(roster_dict),
+                    "Question": clean_df['q_id'],
+                    "Raw Text in Answer Col (Idx 5)": clean_df.iloc[:, 5].astype(str),
+                    "Raw Text in Correct Col (Idx 6)": clean_df.iloc[:, 6].astype(str),
+                    "Python Interpretation Result": clean_df['is_true'].map({True: "✅ counted as CORRECT", False: "❌ counted as WRONG"})
+                })
+                st.dataframe(debug_matrix, use_container_width=True)
+                st.markdown("---")
+
+                # Math Processing
                 summary = clean_df.groupby("s_id").agg(
                     correct=("is_true", "sum"),
                     total=("q_id", "nunique")
                 ).reset_index()
                 
+                # Render Clean Scoreboard Text
                 for _, row in summary.iterrows():
                     student_key = str(row['s_id'])
                     student_display_name = roster_dict.get(student_key, student_key)
                     
-                    if student_key not in roster_dict:
-                        processing_logs.append(f"❌ Map miss: Looked for Cleaned ID '{student_key}' but failed.")
-                    else:
-                        processing_logs.append(f"✅ Map hit: Cleaned ID '{student_key}' -> Name '{student_display_name}'")
-                        
                     total_answered = int(row["total"])
                     correct_answers = int(row["correct"])
                     
                     pct = int((correct_answers / total_answered) * 100) if total_answered > 0 else 0
                     st.markdown(f"👤 **{student_display_name}** — Accuracy: `{pct}%` ({correct_answers}/{total_answered} correct)")
-            
-        with st.expander("📝 View Scoreboard Processing Engine Log", expanded=True):
-            for log in processing_logs:
-                st.text(log)
                     
     except Exception as e:
-        st.error(f"Scoreboard Engine hit an execution fault: {e}")
+        st.error(f"Scoreboard Engine execution fault: {e}")
+
+
 
 
 # ==============================================================================
