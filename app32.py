@@ -279,19 +279,36 @@ else:
     # [SECTION 06: DATA PROCESSING & CALCULATION ENGINE]
     # ==============================================================================
     if all_data_df.empty:
-        st.info("Waiting for incoming responses... Submit answers via the bottom-docked simulator tool.")
+        st.info("Waiting for incoming responses... Submit answers via the connected student remote.")
     else:
-        all_data_df["session_id"] = all_data_df["session_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        teacher_session_target = str(st.session_state.active_session_id).strip()
+        # Standardize sheet session IDs by wiping out decimal strings and empty spaces
+        all_data_df["session_id"] = all_data_df["session_id"].astype(str).str.strip().apply(lambda x: x.split('.')[0])
+        teacher_session_target = str(st.session_state.active_session_id).strip().split('.')[0]
         
-        add_log(f"🔎 Filtering dataset. Active room target is '{teacher_session_target}'.")
+        add_log(f"🔎 Filtering dataset. Target room search key is: '{teacher_session_target}'.")
         df = all_data_df[all_data_df["session_id"] == teacher_session_target].copy()
         
         if df.empty:
-            st.info(f"Session initialized. Join Code: **{st.session_state.active_session_id}**")
+            st.info(f"Session initialized. Awaiting student logins... Join Code: **{st.session_state.active_session_id}**")
         else:
+            # Enforce clean true/false boolean matching across different spreadsheet formats
             df["is_correct"] = df["is_correct"].astype(str).str.upper().str.strip() == "TRUE"
-            df["student_id"] = df["student_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            df["student_id"] = df["student_id"].astype(str).str.strip().apply(lambda x: x.split('.')[0])
+            
+            # Ensure we look up student names from your roster tab using the cleared ID column mapping
+            if "student_name" not in df.columns and not roster_data.empty:
+                roster_lookup = roster_data.copy()
+                roster_lookup.columns = [str(c).strip().lower() for c in roster_lookup.columns]
+                r_id = [c for c in roster_lookup.columns if "id" in c or "code" in c]
+                r_nm = [c for c in roster_lookup.columns if "name" in c or "student" in c and c != r_id]
+                if r_id and r_nm:
+                    roster_lookup[r_id[0]] = roster_lookup[r_id[0]].astype(str).str.strip().apply(lambda x: x.split('.')[0])
+                    name_map = dict(zip(roster_lookup[r_id[0]], roster_lookup[r_nm[0]]))
+                    df["student_name"] = df["student_id"].map(name_map).fillna(df["student_id"])
+            elif "student_name" not in df.columns:
+                df["student_name"] = df["student_id"]
+
+            # Keep only the absolute last submission per student per question
             clean_df = df.drop_duplicates(subset=["student_id", "question"], keep="last")
             
             student_aggregates = clean_df.groupby(["student_id", "student_name"]).agg(
@@ -324,8 +341,7 @@ else:
                 })
             
             final_students_df = pd.DataFrame(processed_records)
-            st.markdown(f"## Classroom Track: {st.session_state.active_period} (Code: {st.session_state.active_session_id})")            
-            # ==============================================================================
+            st.markdown(f"## Classroom Track: {st.session_state.active_assignment} (Code: {st.session_state.active_session_id})")            # ==============================================================================
             # [SECTION 07: MAIN VIEWPORTS (TEACHER GRID & LIVE PACING GRAPH)]
             # ==============================================================================
             tab_teacher, tab_student = st.tabs(["👨‍🏫 Teacher View", "👨‍🎓 Student View"])
