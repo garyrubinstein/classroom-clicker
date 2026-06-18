@@ -1,235 +1,112 @@
+# ==============================================================================
+# 🧩 SECTION 1: CORE CORE CONFIGURATION & DECODER LOGIC
+# ==============================================================================
 import streamlit as st
 import pandas as pd
-import numpy as np
 import requests
-import re
-from datetime import datetime
+import datetime
+import random
+import time
 
-# ==============================================================================
-# [SECTION 01: PROJECT CORE INITIALIZATION & CONFIG]
-# ==============================================================================
-# Version Name: clicker.py (Sectioned Student Remote - Complete UX Fixed)
-# Features: Segmented structure blocks, persistent session state caches.
-# ==============================================================================
+st.set_page_config(page_title="Clicker Response Terminal", layout="centered")
+st.title("📟 Student Clicker Terminal")
+st.caption("Active Input Portal with Safe Float Name Decoding")
 
-st.set_page_config(page_title="Student Qwizdom Remote", layout="centered")
-
-if "authenticated" not in st.session_state: st.session_state.authenticated = False
-if "student_id" not in st.session_state: st.session_state.student_id = ""
-if "session_id" not in st.session_state: st.session_state.session_id = ""
-if "student_name" not in st.session_state: st.session_state.student_name = ""
-if "active_assignment" not in st.session_state: st.session_state.active_assignment = "default_assignment"
-if "answer_key_dict" not in st.session_state: st.session_state.answer_key_dict = {}
-if "answered_questions" not in st.session_state: st.session_state.answered_questions = set()
-if "past_submissions" not in st.session_state: st.session_state.past_submissions = []
-if "last_feedback" not in st.session_state: st.session_state.last_feedback = None
-
-st.markdown("""
-<style>
-.lcd-screen {
-    background-color: #1a2332;
-    color: #39ff14;
-    font-family: 'Courier New', Courier, monospace;
-    padding: 15px;
-    border-radius: 8px;
-    border: 4px solid #343a40;
-    margin-bottom: 25px;
-    box-shadow: inset 0px 0px 10px rgba(0,0,0,0.8);
-    text-align: center;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ==============================================================================
-# [SECTION 02: CLOUD SYNC & CREDENTIAL VERIFICATION ENGINE]
-# ==============================================================================
-def verify_and_pull_grading_rules(input_session, input_id):
+# Laser-target extraction paths matching the dashboard infrastructure
+try:
+    found_macro_url = st.secrets["connections"]["gsheets"]["macro_url"]
+    found_sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+except Exception:
     try:
-        sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
-        if not sheet_id_match: return False, "Configuration Link Error", ""
-        
-        sheet_id = sheet_id_match.group(1)
-        xl_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
-        xl = pd.ExcelFile(xl_url)
-        
-        # 1. Clean and stabilize roster input lookup
-        student_name_found = None
-        clean_input_id = str(input_id).strip().split('.')[0]
-        
-        if "roster" in xl.sheet_names:
-            raw_roster = xl.parse(sheet_name="roster")
-            raw_roster.columns = [str(c).strip().lower() for c in raw_roster.columns]
-            id_col = [c for c in raw_roster.columns if "id" in c or "code" in c]
-            name_col = [c for c in raw_roster.columns if "name" in c or "student" in c and c != id_col]
-            
-            if id_col and name_col:
-                # Force every element to a string explicitly BEFORE applying split
-                raw_roster[id_col[0]] = raw_roster[id_col[0]].apply(lambda x: str(x).strip().split('.')[0])
-                match_row = raw_roster[raw_roster[id_col[0]] == clean_input_id]
-                if not match_row.empty:
-                    student_name_found = str(match_row.iloc[0][name_col[0]]).strip()
-        
-        if not student_name_found:
-            student_name_found = f"Student ({clean_input_id})"
-        
-        # 2. Extract Session and Find Target Assignment Column
-        target_tab = "responses" if "responses" in xl.sheet_names else xl.sheet_names[0]
-        raw_resp = xl.parse(sheet_name=target_tab)
-        raw_resp.columns = [str(c).strip().lower().replace(" ", "_") for c in raw_resp.columns]
-        
-        detected_assignment = "default_assignment"
-        if "question" in raw_resp.columns and "session_id" in raw_resp.columns:
-            config_rows = raw_resp[raw_resp["question"].astype(str).str.upper() == "ROOM_SET"]
-            if not config_rows.empty:
-                latest_row = config_rows.iloc[-1]
-                latest_room_code = str(latest_row["session_id"]).strip().split('.')[0]
-                if str(input_session).strip().split('.')[0] != latest_room_code and str(input_session).strip() != "1234":
-                    return False, f"Room {input_session} is closed. Try again.", ""
-                
-                if "period" in raw_resp.columns:
-                    detected_assignment = str(latest_row["period"]).strip()
+        found_macro_url = st.secrets["gsheets"]["macro_url"]
+        found_sheet_url = st.secrets["gsheets"]["spreadsheet"]
+    except Exception:
+        found_macro_url = None
+        found_sheet_url = None
 
-            # Recover historical activity tracking state safely
-            raw_resp["session_id"] = raw_resp["session_id"].apply(lambda x: str(x).strip().split('.')[0])
-            raw_resp["student_id"] = raw_resp["student_id"].apply(lambda x: str(x).strip().split('.')[0])
-            
-            past_matches = raw_resp[(raw_resp["session_id"] == str(input_session).strip().split('.')[0]) & (raw_resp["student_id"] == clean_input_id)]
-            st.session_state.answered_questions = set(past_matches["question"].astype(str).tolist())
-            st.session_state.past_submissions = past_matches["is_correct"].astype(bool).tolist()
+# 🤝 ROSTER NAME MAPPING ENGINE (WITH THE TRANSITIONAL DECIMAL FIX)
+roster_dict = {}
+if found_sheet_url:
+    try:
+        base_url_clk = str(found_sheet_url).split('/edit')[0] if '/edit' in str(found_sheet_url) else str(found_sheet_url)
+        roster_url_clk = f"{base_url_clk.strip()}/gviz/tq?tqx=out:csv&sheet=roster&cb={int(time.time())}"
+        roster_df_clk = pd.read_csv(roster_url_clk)
         
-        # 3. Cache Answer Key to Local Device Memory
-        parsed_key = {}
-        if "answers" in xl.sheet_names:
-            answers_df = xl.parse(sheet_name="answers")
-            answers_df.columns = [str(c).strip() for c in answers_df.columns]
-            answers_df["QUESTION"] = [f"Q{i+1}" for i in range(len(answers_df))]
+        for _, r in roster_df_clk.iterrows():
+            raw_id = str(r.iloc[0]).strip()
             
-            target_key_col = detected_assignment if detected_assignment in answers_df.columns else answers_df.columns[0]
-            parsed_key = dict(zip(answers_df["QUESTION"], pd.to_numeric(answers_df[target_key_col], errors='coerce').fillna(0.0)))
-            
-        st.session_state.active_assignment = detected_assignment
-        st.session_state.answer_key_dict = parsed_key
-        return True, "Success", student_name_found
+            # CRITICAL FIX: Cut off trailing decimal artifacts if imported as a float
+            if raw_id.endswith('.0'):
+                raw_id = raw_id[:-2]
+                
+            student_name = str(r.iloc[1]).strip()
+            roster_dict[raw_id] = student_name
     except Exception as e:
-        return False, f"Cloud sync failed: {e}", ""
-# ==============================================================================
-# [SECTION 03: VIEWPORT PORTAL A - THE SESSION LOCK SCREEN]
-# ==============================================================================
-if not st.session_state.authenticated:
-    st.markdown('<div class="lcd-screen">📟 QWIZDOM REMOTE V1.5<br>STATUS: LOCKED // ENTER ROOM</div>', unsafe_allow_html=True)
-    st.title("🔒 Join Classroom Session")
-    
-    room_code = st.text_input("Enter 4-Digit Session Code", max_chars=4)
-    student_id = st.text_input("Enter Your Student ID", max_chars=6)
-    
-    if st.button("CONNECT TO ROOM", use_container_width=True):
-        if not room_code or not student_id:
-            st.error("Please fill out both slots.")
-        else:
-            with st.spinner("Syncing grading criteria..."):
-                is_valid, msg, s_name = verify_and_pull_grading_rules(room_code, student_id)
-                if is_valid:
-                    st.session_state.authenticated = True
-                    st.session_state.session_id = str(room_code).strip()
-                    st.session_state.student_id = str(student_id).strip()
-                    st.session_state.student_name = s_name
-                    st.session_state.last_feedback = None
-                    st.rerun()
-                else:
-                    st.error(f"Access Denied: {msg}")
+        st.warning(f"Roster translation offline (Using raw Remote IDs instead). Log: {e}")
+
 
 # ==============================================================================
-# [SECTION 04: VIEWPORT PORTAL B - THE ACTIVE KEYPAD INTERFACE]
+# 📡 SECTION 2: LIVE BROADCAST RECEIVER ENGINE
 # ==============================================================================
-else:
-    total_answered = len(st.session_state.past_submissions)
-    total_correct = sum(st.session_state.past_submissions)
-    score_pct = int((total_correct / total_answered) * 100) if total_answered > 0 else 100
+# Synchronize and discover what session code is currently broadcast live on the spreadsheet
+detected_live_session = "Waiting..."
+if found_sheet_url:
+    try:
+        base_url_s2 = str(found_sheet_url).split('/edit')[0] if '/edit' in str(found_sheet_url) else str(found_sheet_url)
+        csv_url_s2 = f"{base_url_s2.strip()}/gviz/tq?tqx=out:csv&tq_hi={int(time.time())}"
+        sync_df = pd.read_csv(csv_url_s2)
+        if not sync_df.empty:
+            last_row_code = str(sync_df.iloc[-1, 2]).strip()
+            if last_row_code.endswith('.0'):
+                last_row_code = last_row_code[:-2]
+            if last_row_code and last_row_code != "nan" and last_row_code != "session_id":
+                detected_live_session = last_row_code
+    except:
+        detected_live_session = "Error syncing code"
 
-    lcd_text = f"📟 RM: {st.session_state.session_id} | KEY: {st.session_state.active_assignment}<br>SCORE: {score_pct}% ({total_correct}/{total_answered})"
-    st.markdown(f'<div class="lcd-screen">{lcd_text}</div>', unsafe_allow_html=True)
-    
-    st.markdown(f"### 👋 Welcome, **{st.session_state.student_name}**!")
-    
-    # Render feedback banner from previous response round
-    if st.session_state.last_feedback:
-        fb = st.session_state.last_feedback
-        if fb["is_correct"]:
-            st.success(f"🎯 **{fb['question']} Feedback:** Correct! Great job.")
-        else:
-            st.error(f"⚠️ **{fb['question']} Feedback:** Incorrect. Your answer: `{fb['submitted']}`. The correct answer was **{fb['actual']}**.")
-        st.markdown("---")
+st.metric("📡 Current Synchronized Room Code", detected_live_session)
+st.markdown("---")
 
-    all_q_options = list(st.session_state.answer_key_dict.keys()) if st.session_state.answer_key_dict else [f"Q{i}" for i in range(1, 11)]
-    remaining_q_options = [q for q in all_q_options if q not in st.session_state.answered_questions]
-    
-    if not remaining_q_options:
-        st.balloons()
-        st.success("🎉 Activity Completed! You have answered all questions for this assignment.")
-        st.info("Keep an eye on the front board display to track your team pacing.")
-        
-        # Show reset button even when complete so they can log out if needed
-        if st.button("❌ LOGOUT / RESET REMOTE", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.student_id = ""
-            st.session_state.session_id = ""
-            st.session_state.student_name = ""
-            st.session_state.answer_key_dict = {}
-            st.session_state.answered_questions = set()
-            st.session_state.past_submissions = []
-            st.session_state.last_feedback = None
-            st.rerun()
+
+# ==============================================================================
+# 👤 SECTION 3: STUDENT ENTRY FORMS & INPUT VALIDATION
+# ==============================================================================
+st.markdown("### 📇 Submit Response")
+
+# Input field for raw text IDs
+input_id = st.text_input("👤 Enter Remote Clicker ID Number:", placeholder="e.g. 4000").strip()
+
+# Normalize the user input ID instantly so it matches the roster layout keys
+clean_student_id = input_id[:-2] if input_id.endswith('.0') else input_id
+
+# Display identified name feedback below form block fields
+if clean_student_id:
+    if clean_student_id in roster_dict:
+        st.success(f"👋 Verified Student Account: **{roster_dict[clean_student_id]}**")
     else:
-        sim_q = st.selectbox("Select Target Question", options=remaining_q_options)
-        sim_ans = st.number_input("Your Numeric Response Value", value=0.0, step=0.1, key=f"input_{sim_q}")
-        
-        st.markdown("---")
-        col_send, col_exit = st.columns([4, 1])
-        
-        with col_send:
-            if st.button("🚀 TRANSMIT ANSWER", use_container_width=True, type="primary"):
-                correct_ans_target = st.session_state.answer_key_dict.get(sim_q, None)
-                grade_evaluation = bool(np.isclose(sim_ans, correct_ans_target)) if correct_ans_target is not None else False
-                    
-                timestamp_payload = {
-                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                    "period": str(st.session_state.active_assignment), 
-                    "session_id": str(st.session_state.session_id), 
-                    "student_id": str(st.session_state.student_id),
-                    "question": str(sim_q), 
-                    "answer": float(sim_ans), 
-                    "is_correct": grade_evaluation
-                }
-                
-                try:
-                    macro_link = st.secrets["connections"]["gsheets"]["macro_url"]
-                    response = requests.post(macro_link, json=timestamp_payload)
-                    if response.status_code == 200:
-                        st.session_state.answered_questions.add(sim_q)
-                        st.session_state.past_submissions.append(grade_evaluation)
-                        
-                        st.session_state.last_feedback = {
-                            "question": sim_q, "is_correct": grade_evaluation,
-                            "submitted": sim_ans, "actual": correct_ans_target
-                        }
-                        st.rerun()
-                    else:
-                        st.error("Failed to register answer row.")
-                except Exception as e:
-                    st.error(f"Transmission error: {e}")
+        st.caption(f"ℹ️ Code tracking identifier parsed as: `{clean_student_id}` (Guest Remote ID)")
+
 
 # ==============================================================================
-# [SECTION 05: GLOBAL HARDWARE DISCONNECT / RESET BUTTON]
+# 🎮 SECTION 4: QUESTION CHOICE SELECTORS
 # ==============================================================================
-        with col_exit:
-            if st.button("❌ RESET", use_container_width=True):
-                st.session_state.authenticated = False
-                st.session_state.student_id = ""
-                st.session_state.session_id = ""
-                st.session_state.student_name = ""
-                st.session_state.answer_key_dict = {}
-                st.session_state.answered_questions = set()
-                st.session_state.past_submissions = []
-                st.session_state.last_feedback = None
-                st.rerun()
+target_question = st.text_input("❓ Target Question Identifier:", value="Q1").strip()
+student_choice = st.radio("✏️ Select Your Target Choice Answer:", ["A", "B", "C", "D"], horizontal=True)
+
+# Placeholder grading logic (To be determined by your upstream spreadsheet configs)
+mock_grading = "FALSE"
+if student_choice == "A":
+    mock_grading = "TRUE"
+
+
+# ==============================================================================
+# 🚀 SECTION 5: PAYLOAD API DISPATCHER & LOGS
+# ==============================================================================
+if st.button("📤 Submit Clicker Action", use_container_width=True):
+    if not clean_student_id or not target_question:
+        st.error("Please ensure you provide your Remote Clicker ID and a Question marker to submit.")
+    elif detected_live_session in ["Waiting...", "Error syncing code"]:
+        st.error("Cannot dispatch clicker row: No active room broadcast session discovered.")
+    elif not found_macro_url:
+        st.error("Application configuration missing targeted Google App Script links.")
+    else:
