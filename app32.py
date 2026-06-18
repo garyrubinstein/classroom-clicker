@@ -240,7 +240,26 @@ def refresh_scoreboard_panel():
         else:
             matrix_placeholder.info("Awaiting structural incoming database streaming elements...")
 
-        # Redraw Student
+        # Redraw Student Accurate Percentages
+        if st.session_state.cached_summary_data:
+            with scoreboard_placeholder.container():
+                for name, pct, correct, total in st.session_state.cached_summary_data:
+                    st.markdown(f"👤 **{name}** — Accuracy: `{pct}%` ({correct}/{total} correct)")
+        else:
+            scoreboard_placeholder.caption("No scoring calculation data active for this module layout.")
+
+        # Redraw Forensics Debug Logs
+        if st.session_state.cached_logs:
+            with log_placeholder.expander("📝 View Background Sync Engine Log", expanded=False):
+                for log in st.session_state.cached_logs:
+                    st.text(log)
+                    
+    except Exception as e:
+        st.error(f"Scoreboard auto-refresh cycle encountered an error: {e}")
+
+# Run the repeating fragment interface engine cleanly
+refresh_scoreboard_panel()
+
 
 
 # ==============================================================================
