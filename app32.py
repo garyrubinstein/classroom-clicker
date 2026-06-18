@@ -66,10 +66,8 @@ with c1:
     st.metric("Active Join Code", st.session_state.active_code)
 with c2:
     st.metric("Target Assignment Key", selected_key)
-
-
 # ==============================================================================
-# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE
+# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (BUG FIX VERSION)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 👥 Active Student Scoreboard")
@@ -83,6 +81,25 @@ else:
         
         raw_df = pd.read_csv(csv_url)
         
+        # 🤝 ROSTER LOOKUP SYSTEM: Try to pull a roster from other common tab names to map ID to Name
+        roster_dict = {}
+        try:
+            # Look for a "roster" or "students" sheet if available
+            roster_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=roster"
+            roster_df = pd.read_csv(roster_url)
+            # Assume column 0 is ID and column 1 is Name
+            for _, r in roster_df.iterrows():
+                roster_dict[str(r.iloc[0]).strip()] = str(r.iloc[1]).strip()
+        except:
+            try:
+                # Secondary fallback to "answers" tab if names were stored there
+                fallback_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=answers"
+                fb_df = pd.read_csv(fallback_url)
+                for _, r in fb_df.iterrows():
+                    roster_dict[str(r.iloc[0]).strip()] = str(r.iloc[1]).strip()
+            except:
+                pass # Default to numeric ID if no name map is found
+
         if raw_df.empty:
             st.info("No data found in the spreadsheet yet.")
         else:
@@ -98,10 +115,13 @@ else:
             if filtered_df.empty:
                 st.info(f"No student clicks recorded yet for Session Code **{target_code}**.")
             else:
-                # Target columns by absolute positional indexing
+                # Target columns safely by absolute positional indexing
                 filtered_df['s_id'] = filtered_df.iloc[:, 3].astype(str).str.strip() # student_id
                 filtered_df['q_id'] = filtered_df.iloc[:, 4].astype(str).str.strip() # question
-                filtered_df['is_true'] = filtered_df.iloc[:, 6].astype(str).str.upper().str.strip() == "TRUE" # is_correct
+                
+                # Bulletproof True/False parser: handles actual booleans, strings, and casing mixups
+                correct_col = filtered_df.iloc[:, 6]
+                filtered_df['is_true'] = correct_col.astype(str).str.upper().str.strip().isin(["TRUE", "1", "1.0"])
                 
                 # Deduplicate to evaluate only the final remote press submitted per question
                 clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
@@ -114,12 +134,18 @@ else:
                 
                 # Render Clean Text Displays
                 for _, row in summary.iterrows():
-                    pct = int((row["correct"] / row["total"]) * 100) if row["total"] > 0 else 0
-                    st.markdown(f"👤 **Student {row['s_id']}** — Accuracy: `{pct}%` ({row['correct']}/{row['total']} correct)")
+                    student_key = str(row['s_id'])
+                    # Lookup name if available, otherwise default to the number (e.g., Miro vs 4000)
+                    student_display_name = roster_dict.get(student_key, student_key)
+                    
+                    total_answered = int(row["total"])
+                    correct_answers = int(row["correct"])
+                    
+                    pct = int((correct_answers / total_answered) * 100) if total_answered > 0 else 0
+                    st.markdown(f"👤 **{student_display_name}** — Accuracy: `{pct}%` ({correct_answers}/{total_answered} correct)")
                     
     except Exception as e:
         st.caption(f"Waiting for incoming student click inputs... ({e})")
-
 
 # ==============================================================================
 # 🛠️ SECTION 4: DIAGNOSTICS LOG PANEL
