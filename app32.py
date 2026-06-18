@@ -69,7 +69,7 @@ with c2:
 
 
 # ==============================================================================
-# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (DEEP CELLS INSPECTOR)
+# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (AUTO-DETECT SESSION VERSION)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 👥 Active Student Scoreboard")
@@ -84,7 +84,7 @@ else:
         raw_df = pd.read_csv(csv_url)
         
         processing_logs = []
-        processing_logs.append("⚙️ Running Scoreboard Engine deep cell scan...")
+        processing_logs.append("⚙']. Running Scoreboard Engine with dynamic session tracking...")
 
         # 🤝 ROSTER LOOKUP SYSTEM
         roster_dict = {}
@@ -109,11 +109,27 @@ else:
         if raw_df.empty:
             st.info("No data found in the spreadsheet yet.")
         else:
+            # 🎯 AUTO-DETECT LIVE SESSION CODE FROM THE BOTTOM ROW OF THE SHEET
+            # Column index 2 is the session_id column
+            last_row_session = str(raw_df.iloc[-1, 2]).strip()
+            if last_row_session.endswith('.0'):
+                last_row_session = last_row_session[:-2]
+                
+            # Use the sheet's latest code as priority, fallback to session_state if sheet is unreadable
+            if last_row_session and last_row_session != "nan" and last_row_session != "session_id":
+                target_code = last_row_session
+                processing_logs.append(f"📡 Auto-Detected Live Session Code from bottom sheet row: **{target_code}**")
+            else:
+                target_code = str(st.session_state.active_code).strip()
+                processing_logs.append(f"⚠️ Fallback to Control Panel Session Code: **{target_code}**")
+
+            st.info(f"📊 Displaying Live Statistics for Session Code: **{target_code}**")
+
+            # Clean and match session column rows
             session_col = raw_df.iloc[:, 2].astype(str).str.strip()
             if session_col.str.endswith('.0').any():
                 session_col = session_col.apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 
-            target_code = str(st.session_state.active_code).strip()
             filtered_df = raw_df[session_col == target_code].copy()
             
             if not filtered_df.empty:
@@ -133,10 +149,8 @@ else:
                 # Deduplicate to evaluate only the final press
                 clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
                 
-                # 🛠️ EXPLICIT VISUAL INSPECTION GRID
+                # 🛠️ VISUAL INSPECTION GRID
                 st.write("#### 🔍 Row-by-Row Evaluation Diagnostic Matrix")
-                st.caption("This shows exactly what text strings Python extracted from each index of your sheet:")
-                
                 debug_matrix = pd.DataFrame({
                     "Student ID": clean_df['s_id'],
                     "Name Lookup": clean_df['s_id'].map(roster_dict),
@@ -165,9 +179,12 @@ else:
                     pct = int((correct_answers / total_answered) * 100) if total_answered > 0 else 0
                     st.markdown(f"👤 **{student_display_name}** — Accuracy: `{pct}%` ({correct_answers}/{total_answered} correct)")
                     
+        with st.expander("📝 View Scoreboard Processing Engine Log", expanded=True):
+            for log in processing_logs:
+                st.text(log)
+                    
     except Exception as e:
         st.error(f"Scoreboard Engine execution fault: {e}")
-
 
 
 
