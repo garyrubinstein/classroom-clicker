@@ -1,5 +1,5 @@
 # ==============================================================================
-# 🧩 SECTION 1: CORE CORE CONFIGURATION & DECODER LOGIC
+# 🧩 SECTION 1: CORE CONFIGURATION & DECODER LOGIC
 # ==============================================================================
 import streamlit as st
 import pandas as pd
@@ -10,7 +10,7 @@ import time
 
 st.set_page_config(page_title="Clicker Response Terminal", layout="centered")
 st.title("📟 Student Clicker Terminal")
-st.caption("Active Input Portal with Safe Float Name Decoding")
+st.caption("Active Input Portal with Free Response & Custom Session Join")
 
 # Laser-target extraction paths matching the dashboard infrastructure
 try:
@@ -24,7 +24,7 @@ except Exception:
         found_macro_url = None
         found_sheet_url = None
 
-# 🤝 ROSTER NAME MAPPING ENGINE (WITH THE TRANSITIONAL DECIMAL FIX)
+# Roster Mapping Engine
 roster_dict = {}
 if found_sheet_url:
     try:
@@ -34,11 +34,8 @@ if found_sheet_url:
         
         for _, r in roster_df_clk.iterrows():
             raw_id = str(r.iloc[0]).strip()
-            
-            # CRITICAL FIX: Cut off trailing decimal artifacts if imported as a float
             if raw_id.endswith('.0'):
                 raw_id = raw_id[:-2]
-                
             student_name = str(r.iloc[1]).strip()
             roster_dict[raw_id] = student_name
     except Exception as e:
@@ -46,10 +43,9 @@ if found_sheet_url:
 
 
 # ==============================================================================
-# 📡 SECTION 2: LIVE BROADCAST RECEIVER ENGINE
+# 📡 SECTION 2: LIVE BROADCAST RECEIVER & CUSTOM ROOM JOIN
 # ==============================================================================
-# Synchronize and discover what session code is currently broadcast live on the spreadsheet
-detected_live_session = "Waiting..."
+detected_live_session = ""
 if found_sheet_url:
     try:
         base_url_s2 = str(found_sheet_url).split('/edit')[0] if '/edit' in str(found_sheet_url) else str(found_sheet_url)
@@ -62,9 +58,18 @@ if found_sheet_url:
             if last_row_code and last_row_code != "nan" and last_row_code != "session_id":
                 detected_live_session = last_row_code
     except:
-        detected_live_session = "Error syncing code"
+        pass
 
-st.metric("📡 Current Synchronized Room Code", detected_live_session)
+st.markdown("### 🔑 Session Connection")
+# Allows student to see the sheet's active code, or override it by typing a fresh one
+custom_session_input = st.text_input(
+    "Enter Session Room Code to Join:", 
+    value=detected_live_session if detected_live_session else "", 
+    placeholder="e.g. 3665"
+).strip()
+
+final_session_code = custom_session_input[:-2] if custom_session_input.endswith('.0') else custom_session_input
+st.caption(f"📡 *Connected Target Session:* **{final_session_code if final_session_code else 'None Assigned'}**")
 st.markdown("---")
 
 
@@ -73,40 +78,33 @@ st.markdown("---")
 # ==============================================================================
 st.markdown("### 📇 Submit Response")
 
-# Input field for raw text IDs
 input_id = st.text_input("👤 Enter Remote Clicker ID Number:", placeholder="e.g. 4000").strip()
-
-# Normalize the user input ID instantly so it matches the roster layout keys
 clean_student_id = input_id[:-2] if input_id.endswith('.0') else input_id
 
-# Display identified name feedback below form block fields
 if clean_student_id:
     if clean_student_id in roster_dict:
         st.success(f"👋 Verified Student Account: **{roster_dict[clean_student_id]}**")
     else:
-        st.caption(f"ℹ️ Code tracking identifier parsed as: `{clean_student_id}` (Guest Remote ID)")
+        st.caption(f"ℹ️ Tracking ID parsed as: `{clean_student_id}` (Guest ID)")
 
 
 # ==============================================================================
-# 🎮 SECTION 4: QUESTION CHOICE SELECTORS
+# 🎮 SECTION 4: FREE-RESPONSE TEXT INPUT
 # ==============================================================================
 target_question = st.text_input("❓ Target Question Identifier:", value="Q1").strip()
-student_choice = st.radio("✏️ Select Your Target Choice Answer:", ["A", "B", "C", "D"], horizontal=True)
 
-# Placeholder grading logic (To be determined by your upstream spreadsheet configs)
-mock_grading = "FALSE"
-if student_choice == "A":
-    mock_grading = "TRUE"
+# Replaced the multiple-choice radio buttons with a free-response text entry line
+student_text_response = st.text_input("✏️ Type Your Answer Here:", placeholder="Enter numeric value or short answer text").strip()
 
 
 # ==============================================================================
 # 🚀 SECTION 5: PAYLOAD API DISPATCHER & LOGS
 # ==============================================================================
 if st.button("📤 Submit Clicker Action", use_container_width=True):
-    if not clean_student_id or not target_question:
-        st.error("Please ensure you provide your Remote Clicker ID and a Question marker to submit.")
-    elif detected_live_session in ["Waiting...", "Error syncing code"]:
-        st.error("Cannot dispatch clicker row: No active room broadcast session discovered.")
+    if not clean_student_id or not target_question or not student_text_response:
+        st.error("Please ensure you provide your Clicker ID, Question marker, and your Answer text before transmitting.")
+    elif not final_session_code:
+        st.error("Cannot dispatch clicker row: You must input or choose a valid Session Room Code to join.")
     elif not found_macro_url:
         st.error("Application configuration missing targeted Google App Script links.")
     else:
@@ -115,15 +113,15 @@ if st.button("📤 Submit Clicker Action", use_container_width=True):
             payload = {
                 "date": timestamp,
                 "period": "student_input",
-                "session_id": detected_live_session,
+                "session_id": final_session_code,
                 "student_id": clean_student_id,
                 "question": target_question,
-                "answer": student_choice,
-                "is_correct": mock_grading
+                "answer": student_text_response,
+                "is_correct": "PENDING"  # Setting grading status to PENDING since it is a free response input
             }
             
             clean_url = str(found_macro_url).strip()
             response = requests.post(clean_url, json=payload, timeout=5)
-            st.success(f"Response successfully broadcast! Sent choice '{student_choice}' for student '{roster_dict.get(clean_student_id, clean_student_id)}'.")
+            st.success(f"Response successfully broadcast! Sent answer '{student_text_response}' for student '{roster_dict.get(clean_student_id, clean_student_id)}'.")
         except Exception as e:
             st.error(f"Network error encountered transmitting data packet: {e}")
