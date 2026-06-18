@@ -6,28 +6,28 @@ import random
 
 st.set_page_config(page_title="Clicker Mission Control", layout="centered")
 st.title("🎮 Clicker Mission Control")
-st.caption("Simplified Session Broadcaster with Configuration Debugger")
+st.caption("Simplified Session Broadcaster with Dictionary Parsing")
 
-# 🔍 Look for keys inside secrets dynamically to prevent hardcoded naming mismatches
+# 🔍 Safely extract the strings from the nested secrets block
 found_macro_url = None
 found_sheet_url = None
 
-# Scan top-level secrets
-for key in st.secrets.keys():
-    val = str(st.secrets[key])
-    if "script.google.com" in val:
-        found_macro_url = st.secrets[key]
-    elif "docs.google.com/spreadsheets" in val:
-        found_sheet_url = st.secrets[key]
+# First check if the structured "gsheets" dictionary block exists
+if "gsheets" in st.secrets:
+    try:
+        found_macro_url = st.secrets["gsheets"].get("macro_url")
+        found_sheet_url = st.secrets["gsheets"].get("spreadsheet") or st.secrets["gsheets"].get("public_url")
+    except Exception:
+        pass
 
-# Scan nested google_sheets secrets block if it exists
-if "google_sheets" in st.secrets:
-    for key in st.secrets["google_sheets"].keys():
-        val = str(st.secrets["google_sheets"][key])
+# Fallback: Scan top-level secrets if the block structure is flattened
+if not found_macro_url or not found_sheet_url:
+    for key in st.secrets.keys():
+        val = str(st.secrets[key])
         if "script.google.com" in val:
-            found_macro_url = st.secrets["google_sheets"][key]
+            found_macro_url = val
         elif "docs.google.com/spreadsheets" in val:
-            found_sheet_url = st.secrets["google_sheets"][key]
+            found_sheet_url = val
 
 # 🛒 Control Interface Selection
 selected_key = st.selectbox("📖 Select Assignment Tracker Key:", ["quiz_1", "quiz_2", "practice_set"])
@@ -51,12 +51,13 @@ if st.button("🚀 Broadcast New Session Code", use_container_width=True):
                 "answer": "0",
                 "is_correct": "TRUE"
             }
-            response = requests.post(found_macro_url, json=payload, timeout=5)
-            st.success(f"Broadcast sent down the wire! Code {new_code} is live.")
+            # Fire standard POST request using the isolated string link
+            response = requests.post(str(found_macro_url).strip(), json=payload, timeout=5)
+            st.success(f"Broadcast sent! Code {new_code} is live on your sheet.")
         except Exception as e:
             st.error(f"Could not broadcast row via API: {e}")
     else:
-        st.warning(f"Code updated locally to {new_code}, but your Google script URL could not be found in secrets.")
+        st.warning(f"Code updated locally to {new_code}, but your macro_url could not be isolated.")
 
 # Broadcast Status Dashboard
 st.markdown("---")
@@ -71,42 +72,26 @@ with c2:
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 📋 Live Diagnostics & Secrets Inspector")
-st.caption("Use this console to see exactly what keys are configured in your Streamlit Cloud account settings.")
 
 if st.button("🔄 Refresh Debug Console", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
-# 1. Inspect Secret Keys
-st.write("**Detected Configuration Keys inside your Secrets file:**")
-all_secret_keys = list(st.secrets.keys())
-if "google_sheets" in st.secrets:
-    nested_keys = [f"google_sheets -> {k}" for k in st.secrets["google_sheets"].keys()]
-    all_secret_keys.extend(nested_keys)
-st.code(str(all_secret_keys))
+st.write("**Isolated Macro URL Target Link:**")
+st.code(str(found_macro_url))
 
-# 2. Check Macro API Link Status
-if found_macro_url:
-    st.success("✅ Google Apps Script Broadcaster Link: **FOUND**")
-else:
-    st.error("❌ Google Apps Script Broadcaster Link: **MISSING** (Ensure your macro/script URL is added to your app secrets!)")
+st.write("**Isolated Spreadsheet Target Link:**")
+st.code(str(found_sheet_url))
 
-# 3. Inspect Spreadsheet Data
-if not found_sheet_url:
-    st.caption("Add your main Google Sheets URL to secrets to display raw rows.")
-else:
+if found_sheet_url:
     try:
-        # Convert spreadsheet view link to raw CSV download stream cleanly
         base_url = found_sheet_url.split('/edit')[0] if '/edit' in found_sheet_url else found_sheet_url
         csv_url = f"{base_url}/gviz/tq?tqx=out:csv"
         
         raw_df = pd.read_csv(csv_url)
         st.metric("Total Rows Processed in Spreadsheet Log", len(raw_df))
         
-        st.write("**Spreadsheet Headers detected:**")
-        st.code(str(list(raw_df.columns)))
-        
-        st.write("**Most Recent 5 Rows sitting in the Google Sheet:**")
+        st.write("**Most Recent 5 Rows sitting in your Sheet right now:**")
         st.dataframe(raw_df.tail(5), use_container_width=True)
     except Exception as e:
         st.caption(f"Awaiting response log streams... ({e})")
