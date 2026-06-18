@@ -84,9 +84,8 @@ with c2:
     st.metric("Target Assignment Key", selected_key)
 
 
-
 # ==============================================================================
-# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (SMART ROW-LOCKING REFRESH)
+# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (LOOP LOCK FIX)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 👥 Active Student Scoreboard")
@@ -95,7 +94,7 @@ st.markdown("### 👥 Active Student Scoreboard")
 if "last_processed_row_count" not in st.session_state:
     st.session_state.last_processed_row_count = 0
 
-# 🔄 Smart Background Fragment: Polls every 5 seconds, but blocks UI writes if no new rows exist
+# 🔄 Smart Background Fragment: Always runs to completion to keep the background timer ticking
 @st.fragment(run_every=5)
 def refresh_scoreboard_panel():
     if not found_sheet_url:
@@ -111,102 +110,101 @@ def refresh_scoreboard_panel():
         
         raw_df = pd.read_csv(csv_url)
         current_row_count = len(raw_df)
+        current_time_str = datetime.datetime.now().strftime("%H:%M:%S")
         
-        # 🚦 CHANGE DETECTOR GUARD: If row count hasn't changed, halt execution and change nothing
+        # 🚦 CHANGE DETECTOR GUARD: Split layout cleanly so it never hard-kills the background loop
         if current_row_count == st.session_state.last_processed_row_count and st.session_state.last_processed_row_count > 0:
-            current_time_str = datetime.datetime.now().strftime("%H:%M:%S")
             st.caption(f"💤 **Dashboard Idling:** Checked at `{current_time_str}` — No new clicker rows detected in database.")
-            return
-
-        # Update tracking state memory when a change is confirmed
-        st.session_state.last_processed_row_count = current_row_count
-
-        forensics_logs = []
-        forensics_logs.append("🔍 --- SHEET CHANGE DETECTED: RUNNING CALCULATIONS ---")
-        forensics_logs.append(f"📊 New Database Row Count: {current_row_count}")
-
-        # Roster Name Mapping Engine
-        roster_dict = {}
-        try:
-            roster_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=roster&cb={cache_buster}"
-            roster_df = pd.read_csv(roster_url)
-            for _, r in roster_df.iterrows():
-                raw_id = str(r.iloc[0]).strip()
-                if raw_id.endswith('.0'): raw_id = raw_id[:-2]
-                roster_dict[raw_id] = str(r.iloc[1]).strip()
-        except:
-            pass
-
-        if raw_df.empty:
-            st.info("No data found in the spreadsheet yet.")
         else:
-            # Auto-Detect Active Session Code
-            last_row_session = str(raw_df.iloc[-1, 2]).strip()
-            if last_row_session.endswith('.0'):
-                last_row_session = last_row_session[:-2]
-                
-            if last_row_session and last_row_session != "nan" and last_row_session != "session_id":
-                target_code = last_row_session
+            # Update tracking state memory when a change is confirmed or initialized
+            st.session_state.last_processed_row_count = current_row_count
+
+            forensics_logs = []
+            forensics_logs.append("🔍 --- SHEET CHANGE DETECTED: RUNNING CALCULATIONS ---")
+            forensics_logs.append(f"📊 New Database Row Count: {current_row_count}")
+
+            # Roster Name Mapping Engine
+            roster_dict = {}
+            try:
+                roster_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=roster&cb={cache_buster}"
+                roster_df = pd.read_csv(roster_url)
+                for _, r in roster_df.iterrows():
+                    raw_id = str(r.iloc[0]).strip()
+                    if raw_id.endswith('.0'): raw_id = raw_id[:-2]
+                    roster_dict[raw_id] = str(r.iloc[1]).strip()
+            except:
+                pass
+
+            if raw_df.empty:
+                st.info("No data found in the spreadsheet yet.")
             else:
-                target_code = str(st.session_state.active_code).strip()
-
-            current_time_str = datetime.datetime.now().strftime("%H:%M:%S")
-            st.caption(f"⚡ **Live Dashboard Status:** Table recalculated at `{current_time_str}` (New data found!)")
-            st.info(f"📊 Displaying Live Statistics for Session Code: **{target_code}**")
-
-            # Data Filtering
-            session_col = raw_df.iloc[:, 2].astype(str).str.strip()
-            if session_col.str.endswith('.0').any():
-                session_col = session_col.apply(lambda x: x[:-2] if x.endswith('.0') else x)
-                
-            filtered_df = raw_df[session_col == target_code].copy()
-            
-            if not filtered_df.empty:
-                room_set_mask = filtered_df.iloc[:, 4].astype(str).str.upper() == "ROOM_SET"
-                filtered_df = filtered_df[~room_set_mask]
-            
-            if filtered_df.empty:
-                st.info(f"No student clicks recorded yet for Session Code **{target_code}**.")
-            else:
-                filtered_df['s_id'] = filtered_df.iloc[:, 3].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
-                filtered_df['q_id'] = filtered_df.iloc[:, 4].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
-                filtered_df['is_true'] = filtered_df.iloc[:, 6].astype(str).str.upper().str.strip().isin(["TRUE", "1", "1.0"])
-                
-                clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
-                
-                # Render Row Evaluation Diagnostic Grid
-                st.write("#### 🔍 Live Response Matrix")
-                debug_matrix = pd.DataFrame({
-                    "Student ID": clean_df['s_id'],
-                    "Name": clean_df['s_id'].map(roster_dict),
-                    "Question": clean_df['q_id'],
-                    "Answer Code": clean_df.iloc[:, 5].astype(str),
-                    "Sheet Status": clean_df.iloc[:, 6].astype(str),
-                    "Dashboard Calculation": clean_df['is_true'].map({True: "✅ CORRECT", False: "❌ WRONG"})
-                })
-                st.dataframe(debug_matrix, use_container_width=True)
-                st.markdown("---")
-
-                # Calculate metrics
-                summary = clean_df.groupby("s_id").agg(correct=("is_true", "sum"), total=("q_id", "nunique")).reset_index()
-                
-                for _, row in summary.iterrows():
-                    student_key = str(row['s_id'])
-                    student_display_name = roster_dict.get(student_key, student_key)
-                    total_answered = int(row["total"])
-                    correct_answers = int(row["correct"])
-                    pct = int((correct_answers / total_answered) * 100) if total_answered > 0 else 0
-                    st.markdown(f"👤 **{student_display_name}** — Accuracy: `{pct}%` ({correct_answers}/{total_answered} correct)")
+                # Auto-Detect Active Session Code
+                last_row_session = str(raw_df.iloc[-1, 2]).strip()
+                if last_row_session.endswith('.0'):
+                    last_row_session = last_row_session[:-2]
                     
-        with st.expander("📝 View Background Sync Engine Log", expanded=False):
-            for log in forensics_logs:
-                st.text(log)
+                if last_row_session and last_row_session != "nan" and last_row_session != "session_id":
+                    target_code = last_row_session
+                else:
+                    target_code = str(st.session_state.active_code).strip()
+
+                st.caption(f"⚡ **Live Dashboard Status:** Table recalculated at `{current_time_str}` (New data found!)")
+                st.info(f"📊 Displaying Live Statistics for Session Code: **{target_code}**")
+
+                # Data Filtering
+                session_col = raw_df.iloc[:, 2].astype(str).str.strip()
+                if session_col.str.endswith('.0').any():
+                    session_col = session_col.apply(lambda x: x[:-2] if x.endswith('.0') else x)
+                    
+                filtered_df = raw_df[session_col == target_code].copy()
+                
+                if not filtered_df.empty:
+                    room_set_mask = filtered_df.iloc[:, 4].astype(str).str.upper() == "ROOM_SET"
+                    filtered_df = filtered_df[~room_set_mask]
+                
+                if filtered_df.empty:
+                    st.info(f"No student clicks recorded yet for Session Code **{target_code}**.")
+                else:
+                    filtered_df['s_id'] = filtered_df.iloc[:, 3].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
+                    filtered_df['q_id'] = filtered_df.iloc[:, 4].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
+                    filtered_df['is_true'] = filtered_df.iloc[:, 6].astype(str).str.upper().str.strip().isin(["TRUE", "1", "1.0"])
+                    
+                    clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
+                    
+                    # Render Row Evaluation Diagnostic Grid
+                    st.write("#### 🔍 Live Response Matrix")
+                    debug_matrix = pd.DataFrame({
+                        "Student ID": clean_df['s_id'],
+                        "Name": clean_df['s_id'].map(roster_dict),
+                        "Question": clean_df['q_id'],
+                        "Answer Code": clean_df.iloc[:, 5].astype(str),
+                        "Sheet Status": clean_df.iloc[:, 6].astype(str),
+                        "Dashboard Calculation": clean_df['is_true'].map({True: "✅ CORRECT", False: "❌ WRONG"})
+                    })
+                    st.dataframe(debug_matrix, use_container_width=True)
+                    st.markdown("---")
+
+                    # Calculate metrics
+                    summary = clean_df.groupby("s_id").agg(correct=("is_true", "sum"), total=("q_id", "nunique")).reset_index()
+                    
+                    for _, row in summary.iterrows():
+                        student_key = str(row['s_id'])
+                        student_display_name = roster_dict.get(student_key, student_key)
+                        total_answered = int(row["total"])
+                        correct_answers = int(row["correct"])
+                        pct = int((correct_answers / total_answered) * 100) if total_answered > 0 else 0
+                        st.markdown(f"👤 **{student_display_name}** — Accuracy: `{pct}%` ({correct_answers}/{total_answered} correct)")
+                        
+            with st.expander("📝 View Background Sync Engine Log", expanded=False):
+                for log in forensics_logs:
+                    st.text(log)
                 
     except Exception as e:
         st.error(f"Scoreboard auto-refresh cycle encountered an error: {e}")
 
 # Run the repeating fragment interface engine cleanly
 refresh_scoreboard_panel()
+
 
 # ==============================================================================
 # 🛠️ SECTION 4: DIAGNOSTICS LOG PANEL
