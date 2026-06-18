@@ -1,7 +1,17 @@
+import os
+import sys
+
+# Auto-install missing packages on the fly to prevent hair-pulling errors
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+except ModuleNotFoundError:
+    os.system(f"{sys.executable} -m pip install gspread oauth2client")
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+
 import streamlit as st
 import pandas as pd
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import datetime
 import random
 
