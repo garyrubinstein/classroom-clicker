@@ -23,15 +23,31 @@ except Exception:
         found_macro_url = None
         found_sheet_url = None
 
-
 # ==============================================================================
-# 🚀 SECTION 2: SESSION BROADCASTER CONTROLS
+# 🚀 SECTION 2: SESSION BROADCASTER CONTROLS (SYNCHRONIZED DISPLAY)
 # ==============================================================================
 # 🛒 Control Interface Selection
 selected_key = st.selectbox("📖 Select Assignment Tracker Key:", ["quiz_1", "quiz_2", "practice_set"])
 
 if "active_code" not in st.session_state:
     st.session_state.active_code = "3665"
+
+# 🎯 Sync Display Check: Read what code is physically recorded at the bottom of the sheet right now
+live_display_code = st.session_state.active_code
+if found_sheet_url:
+    try:
+        import time
+        base_url_s2 = str(found_sheet_url).split('/edit')[0] if '/edit' in str(found_sheet_url) else str(found_sheet_url)
+        csv_url_s2 = f"{base_url_s2.strip()}/gviz/tq?tqx=out:csv&tq_hi={int(time.time())}"
+        sync_df = pd.read_csv(csv_url_s2)
+        if not sync_df.empty:
+            last_row_code = str(sync_df.iloc[-1, 2]).strip()
+            if last_row_code.endswith('.0'):
+                last_row_code = last_row_code[:-2]
+            if last_row_code and last_row_code != "nan" and last_row_code != "session_id":
+                live_display_code = last_row_code
+    except:
+        pass
 
 if st.button("🚀 Broadcast New Session Code", use_container_width=True):
     new_code = str(random.randint(1000, 9999))
@@ -59,14 +75,13 @@ if st.button("🚀 Broadcast New Session Code", use_container_width=True):
     else:
         st.warning(f"Code updated locally to {new_code}, but your macro_url path could not be found.")
 
-# Broadcast Status Dashboard
+# Broadcast Status Dashboard (Now reading directly from the Sheet's active line)
 st.markdown("---")
 c1, c2 = st.columns(2)
 with c1:
-    st.metric("Active Join Code", st.session_state.active_code)
+    st.metric("Active Join Code", live_display_code)
 with c2:
     st.metric("Target Assignment Key", selected_key)
-
 # ==============================================================================
 # 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (CACHE-BUSTING FORENSICS)
 # ==============================================================================
