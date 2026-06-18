@@ -8,7 +8,7 @@ from datetime import datetime
 # ==============================================================================
 # [SECTION 01: PROJECT CORE INITIALIZATION & CONFIG]
 # ==============================================================================
-# Version Name: clicker.py (Sectioned Student Remote - Complete UX)
+# Version Name: clicker.py (Sectioned Student Remote - Complete UX Fixed)
 # Features: Segmented structure blocks, persistent session state caches.
 # ==============================================================================
 
@@ -137,4 +137,97 @@ if not st.session_state.authenticated:
                 else:
                     st.error(f"Access Denied: {msg}")
 
-# =================================
+# ==============================================================================
+# [SECTION 04: VIEWPORT PORTAL B - THE ACTIVE KEYPAD INTERFACE]
+# ==============================================================================
+else:
+    total_answered = len(st.session_state.past_submissions)
+    total_correct = sum(st.session_state.past_submissions)
+    score_pct = int((total_correct / total_answered) * 100) if total_answered > 0 else 100
+
+    lcd_text = f"📟 RM: {st.session_state.session_id} | KEY: {st.session_state.active_assignment}<br>SCORE: {score_pct}% ({total_correct}/{total_answered})"
+    st.markdown(f'<div class="lcd-screen">{lcd_text}</div>', unsafe_allow_html=True)
+    
+    st.markdown(f"### 👋 Welcome, **{st.session_state.student_name}**!")
+    
+    # Render feedback banner from previous response round
+    if st.session_state.last_feedback:
+        fb = st.session_state.last_feedback
+        if fb["is_correct"]:
+            st.success(f"🎯 **{fb['question']} Feedback:** Correct! Great job.")
+        else:
+            st.error(f"⚠️ **{fb['question']} Feedback:** Incorrect. Your answer: `{fb['submitted']}`. The correct answer was **{fb['actual']}**.")
+        st.markdown("---")
+
+    all_q_options = list(st.session_state.answer_key_dict.keys()) if st.session_state.answer_key_dict else [f"Q{i}" for i in range(1, 11)]
+    remaining_q_options = [q for q in all_q_options if q not in st.session_state.answered_questions]
+    
+    if not remaining_q_options:
+        st.balloons()
+        st.success("🎉 Activity Completed! You have answered all questions for this assignment.")
+        st.info("Keep an eye on the front board display to track your team pacing.")
+        
+        # Show reset button even when complete so they can log out if needed
+        if st.button("❌ LOGOUT / RESET REMOTE", use_container_width=True):
+            st.session_state.authenticated = False
+            st.session_state.student_id = ""
+            st.session_state.session_id = ""
+            st.session_state.student_name = ""
+            st.session_state.answer_key_dict = {}
+            st.session_state.answered_questions = set()
+            st.session_state.past_submissions = []
+            st.session_state.last_feedback = None
+            st.rerun()
+    else:
+        sim_q = st.selectbox("Select Target Question", options=remaining_q_options)
+        sim_ans = st.number_input("Your Numeric Response Value", value=0.0, step=0.1, key=f"input_{sim_q}")
+        
+        st.markdown("---")
+        col_send, col_exit = st.columns([4, 1])
+        
+        with col_send:
+            if st.button("🚀 TRANSMIT ANSWER", use_container_width=True, type="primary"):
+                correct_ans_target = st.session_state.answer_key_dict.get(sim_q, None)
+                grade_evaluation = bool(np.isclose(sim_ans, correct_ans_target)) if correct_ans_target is not None else False
+                    
+                timestamp_payload = {
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                    "period": str(st.session_state.active_assignment), 
+                    "session_id": str(st.session_state.session_id), 
+                    "student_id": str(st.session_state.student_id),
+                    "question": str(sim_q), 
+                    "answer": float(sim_ans), 
+                    "is_correct": grade_evaluation
+                }
+                
+                try:
+                    macro_link = st.secrets["connections"]["gsheets"]["macro_url"]
+                    response = requests.post(macro_link, json=timestamp_payload)
+                    if response.status_code == 200:
+                        st.session_state.answered_questions.add(sim_q)
+                        st.session_state.past_submissions.append(grade_evaluation)
+                        
+                        st.session_state.last_feedback = {
+                            "question": sim_q, "is_correct": grade_evaluation,
+                            "submitted": sim_ans, "actual": correct_ans_target
+                        }
+                        st.rerun()
+                    else:
+                        st.error("Failed to register answer row.")
+                except Exception as e:
+                    st.error(f"Transmission error: {e}")
+
+# ==============================================================================
+# [SECTION 05: GLOBAL HARDWARE DISCONNECT / RESET BUTTON]
+# ==============================================================================
+        with col_exit:
+            if st.button("❌ RESET", use_container_width=True):
+                st.session_state.authenticated = False
+                st.session_state.student_id = ""
+                st.session_state.session_id = ""
+                st.session_state.student_name = ""
+                st.session_state.answer_key_dict = {}
+                st.session_state.answered_questions = set()
+                st.session_state.past_submissions = []
+                st.session_state.last_feedback = None
+                st.rerun()
