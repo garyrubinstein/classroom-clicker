@@ -215,11 +215,11 @@ if st.sidebar.button("🚀 Start New Session"):
     st.session_state.active_assignment = selected_assignment
     add_log(f"🆕 Button Clicked: Starting brand new room session code {st.session_state.active_session_id}")
     
-    # Send configuration packet to Google macro so student app can discover the active room code
+    # Send a comprehensive configuration packet so the student app can pull the active grading rules
     try:
         config_payload = {
             "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "period": "CONFIG_UPDATE",
+            "period": str(st.session_state.active_assignment), # Sends the specific tracked assignment key name
             "session_id": str(st.session_state.active_session_id),
             "student_id": "SERVER",
             "question": "ROOM_SET",
@@ -227,7 +227,7 @@ if st.sidebar.button("🚀 Start New Session"):
             "is_correct": True
         }
         requests.post(st.secrets["connections"]["gsheets"]["macro_url"], json=config_payload)
-        add_log(f"📡 Broadcasted active session {st.session_state.active_session_id} to cloud sheets coordinator.")
+        add_log(f"📡 Broadcasted active session {st.session_state.active_session_id} and assignment tracker down to the cloud sheet.")
     except Exception as e:
         add_log(f"⚠️ Failed to broadcast active session room configuration: {e}")
         
@@ -256,7 +256,6 @@ else:
     runtime_key = {"Q1": 2.0, "Q2": 7.5, "Q3": 100.0, "Q4": 0.25, "Q5": 13.0}
     sorted_questions = ["Q1", "Q2", "Q3", "Q4", "Q5"]
 tot_q_count = len(sorted_questions)
-
 # ==============================================================================
 # [SECTION 05: SYSTEM LOGS ENGINE PANEL (EXPANDER)]
 # ==============================================================================
