@@ -8,19 +8,23 @@ from datetime import datetime
 # ==============================================================================
 # 📋 PROJECT VERSION LOG
 # ==============================================================================
-# Version Name: clicker.py (Student Qwizdom Clicker - Iteration 4: Auto-Grading Engine)
-# Features: Reads assignment key from the ROOM_SET row, downloads answer values,
-#           and calculates absolute correctness before firing webhooks.
+# Version Name: clicker.py (Student Qwizdom Clicker - Iteration 5: Complete UX)
+# Features: Welcome message, instant feedback (with answer reveal on wrong),
+#           dynamic question removal, and running accuracy score calculation.
 # ==============================================================================
 
 st.set_page_config(page_title="Student Qwizdom Remote", layout="centered")
 
+# Initialize persistent session states
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if "student_id" not in st.session_state: st.session_state.student_id = ""
 if "session_id" not in st.session_state: st.session_state.session_id = ""
 if "student_name" not in st.session_state: st.session_state.student_name = ""
 if "active_assignment" not in st.session_state: st.session_state.active_assignment = "default_assignment"
 if "answer_key_dict" not in st.session_state: st.session_state.answer_key_dict = {}
+if "answered_questions" not in st.session_state: st.session_state.answered_questions = set()
+if "past_submissions" not in st.session_state: st.session_state.past_submissions = []
+if "last_feedback" not in st.session_state: st.session_state.last_feedback = None
 
 st.markdown("""
 <style>
@@ -77,11 +81,20 @@ def verify_and_pull_grading_rules(input_session, input_id):
                 if str(input_session).strip() != latest_room_code and str(input_session).strip() != "1234":
                     return False, f"Room {input_session} is closed. Try again.", ""
                 
-                # Snatch the running period/assignment column assigned by the teacher app!
                 if "period" in raw_resp.columns:
                     detected_assignment = str(latest_row["period"]).strip()
+
+            # Find past questions answered *by this student in this specific session* to recover state if they refresh
+            raw_resp["session_id"] = raw_resp["session_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            raw_resp["student_id"] = raw_resp["student_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            
+            past_matches = raw_resp[(raw_resp["session_id"] == str(input_session).strip()) & (raw_resp["student_id"] == str(input_id).strip())]
+            st.session_state.answered_questions = set(past_matches["question"].astype(str).tolist())
+            
+            # Reconstruct past grades for the running score display
+            st.session_state.past_submissions = past_matches["is_correct"].astype(bool).tolist()
         
-        # 3. Cache the values of the target Answer Key column onto the local device memory
+        # 3. Cache Answer Key
         parsed_key = {}
         if "answers" in xl.sheet_names:
             answers_df = xl.parse(sheet_name="answers")
@@ -97,9 +110,9 @@ def verify_and_pull_grading_rules(input_session, input_id):
     except Exception as e:
         return False, f"Cloud sync failed: {e}", ""
 
-# --- CONSOLE INTERFACE ---
+# --- PHASE 1: THE LOCK SCREEN ---
 if not st.session_state.authenticated:
-    st.markdown('<div class="lcd-screen">📟 QWIZDOM REMOTE V1.4<br>STATUS: LOCKED // ENTER ROOM</div>', unsafe_allow_html=True)
+    st.markdown('<div class="lcd-screen">📟 QWIZDOM REMOTE V1.5<br>STATUS: LOCKED // ENTER ROOM</div>', unsafe_allow_html=True)
     st.title("🔒 Join Classroom Session")
     
     room_code = st.text_input("Enter 4-Digit Session Code", max_chars=4)
@@ -116,62 +129,94 @@ if not st.session_state.authenticated:
                     st.session_state.session_id = str(room_code).strip()
                     st.session_state.student_id = str(student_id).strip()
                     st.session_state.student_name = s_name
-                    st.success("Connected!")
+                    st.session_state.last_feedback = None # Reset feedback on clean login
                     st.rerun()
                 else:
                     st.error(f"Access Denied: {msg}")
+
+# --- PHASE 2: ACTIVE REMOTE VIEW ---
 else:
-    lcd_text = f"📟 RM: {st.session_state.session_id} | KEY: {st.session_state.active_assignment}<br>USER: {st.session_state.student_name.upper()}"
+    # Calculate current accuracy score percentage
+    total_answered = len(st.session_state.past_submissions)
+    total_correct = sum(st.session_state.past_submissions)
+    score_pct = int((total_correct / total_answered) * 100) if total_answered > 0 else 100
+
+    # Build top LCD info board
+    lcd_text = f"📟 RM: {st.session_state.session_id} | KEY: {st.session_state.active_assignment}<br>SCORE: {score_pct}% ({total_correct}/{total_answered})"
     st.markdown(f'<div class="lcd-screen">{lcd_text}</div>', unsafe_allow_html=True)
     
-    st.title("📱 Active Clicker Remote")
+    # Welcome banner matching user name
+    st.markdown(f"### 👋 Welcome, **{st.session_state.student_name}**!")
     
-    # Question selector choices map directly to keys loaded onto device memory
-    q_options = list(st.session_state.answer_key_dict.keys()) if st.session_state.answer_key_dict else [f"Q{i}" for i in range(1, 11)]
-    sim_q = st.selectbox("Active Question Target", options=q_options)
-    sim_ans = st.number_input("Your Numeric Response Value", value=0.0, step=0.1)
+    # --- SHOW PREVIOUS SUBMISSION FEEDBACK BOX ---
+    if st.session_state.last_feedback:
+        fb = st.session_state.last_feedback
+        if fb["is_correct"]:
+            st.success(f"🎯 **{fb['question']} Feedback:** Correct! Great job.")
+        else:
+            st.error(f"⚠️ **{fb['question']} Feedback:** Incorrect. Your answer: `{fb['submitted']}`. The correct answer was **{fb['actual']}**.")
+        st.markdown("---")
+
+    # --- DYNAMIC QUESTION DROPDOWN FILTERING ---
+    # Subtract elements already in answered_questions from master list
+    all_q_options = list(st.session_state.answer_key_dict.keys()) if st.session_state.answer_key_dict else [f"Q{i}" for i in range(1, 11)]
+    remaining_q_options = [q for q in all_q_options if q not in st.session_state.answered_questions]
     
-    st.markdown("---")
-    col_send, col_exit = st.columns([4, 1])
-    
-    with col_send:
-        if st.button("🚀 TRANSMIT ANSWER", use_container_width=True, type="primary"):
-            
-            # --- LOCAL ACTIVE GRADING ENGINE ---
-            # Retrieve the correct answer from local device memory cache
-            correct_ans_target = st.session_state.answer_key_dict.get(sim_q, None)
-            
-            if correct_ans_target is not None:
-                # Math grade execution checks if input matches key within small float epsilon
-                grade_evaluation = bool(np.isclose(sim_ans, correct_ans_target))
-            else:
-                grade_evaluation = False
+    if not remaining_q_options:
+        st.balloons()
+        st.success("🎉 Activity Completed! You have answered all questions for this assignment.")
+        st.info("Keep an eye on the front board display to track your team pacing.")
+    else:
+        sim_q = st.selectbox("Select Target Question", options=remaining_q_options)
+        sim_ans = st.number_input("Your Numeric Response Value", value=0.0, step=0.1, key=f"input_{sim_q}")
+        
+        st.markdown("---")
+        col_send, col_exit = st.columns([4, 1])
+        
+        with col_send:
+            if st.button("🚀 TRANSMIT ANSWER", use_container_width=True, type="primary"):
+                correct_ans_target = st.session_state.answer_key_dict.get(sim_q, None)
+                grade_evaluation = bool(np.isclose(sim_ans, correct_ans_target)) if correct_ans_target is not None else False
+                    
+                timestamp_payload = {
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                    "period": str(st.session_state.active_assignment), 
+                    "session_id": str(st.session_state.session_id), 
+                    "student_id": str(st.session_state.student_id),
+                    "question": str(sim_q), 
+                    "answer": float(sim_ans), 
+                    "is_correct": grade_evaluation
+                }
                 
-            timestamp_payload = {
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                "period": str(st.session_state.active_assignment), 
-                "session_id": str(st.session_state.session_id), 
-                "student_id": str(st.session_state.student_id),
-                "question": str(sim_q), 
-                "answer": float(sim_ans), 
-                "is_correct": grade_evaluation # Fires actual calculation out to spreadsheet!
-            }
-            try:
-                macro_link = st.secrets["connections"]["gsheets"]["macro_url"]
-                response = requests.post(macro_link, json=timestamp_payload)
-                if response.status_code == 200:
-                    status_text = "CORRECT! 🎉" if grade_evaluation else "SUBMITTED! 👍"
-                    st.toast(f"🎯 {sim_q}: {status_text}", icon="✅")
-                else:
-                    st.error("Failed to register answer row.")
-            except Exception as e:
-                st.error(f"Transmission error: {e}")
-                
+                try:
+                    macro_link = st.secrets["connections"]["gsheets"]["macro_url"]
+                    response = requests.post(macro_link, json=timestamp_payload)
+                    if response.status_code == 200:
+                        # Append performance metrics dynamically to local device tracking
+                        st.session_state.answered_questions.add(sim_q)
+                        st.session_state.past_submissions.append(grade_evaluation)
+                        
+                        # Cache feedback state parameters for the upcoming refresh cycle
+                        st.session_state.last_feedback = {
+                            "question": sim_q,
+                            "is_correct": grade_evaluation,
+                            "submitted": sim_ans,
+                            "actual": correct_ans_target
+                        }
+                        st.rerun()
+                    else:
+                        st.error("Failed to register answer row.")
+                except Exception as e:
+                    st.error(f"Transmission error: {e}")
+                    
     with col_exit:
         if st.button("❌ RESET", use_container_width=True):
             st.session_state.authenticated = False
-            st.session_state.session_id = ""
             st.session_state.student_id = ""
+            st.session_state.session_id = ""
             st.session_state.student_name = ""
             st.session_state.answer_key_dict = {}
+            st.session_state.answered_questions = set()
+            st.session_state.past_submissions = []
+            st.session_state.last_feedback = None
             st.rerun()
