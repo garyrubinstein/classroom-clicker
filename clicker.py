@@ -64,8 +64,8 @@ def verify_and_pull_grading_rules(input_session, input_id):
             name_col = [c for c in raw_roster.columns if "name" in c or "student" in c and c != id_col]
             
             if id_col and name_col:
-                # Force clean integers out of the roster ID column to bypass float decimals (.0)
-                raw_roster[id_col[0]] = raw_roster[id_col[0]].astype(str).str.strip().apply(lambda x: x.split('.')[0])
+                # Force every element to a string explicitly BEFORE applying split
+                raw_roster[id_col[0]] = raw_roster[id_col[0]].apply(lambda x: str(x).strip().split('.')[0])
                 match_row = raw_roster[raw_roster[id_col[0]] == clean_input_id]
                 if not match_row.empty:
                     student_name_found = str(match_row.iloc[0][name_col[0]]).strip()
@@ -83,16 +83,16 @@ def verify_and_pull_grading_rules(input_session, input_id):
             config_rows = raw_resp[raw_resp["question"].astype(str).str.upper() == "ROOM_SET"]
             if not config_rows.empty:
                 latest_row = config_rows.iloc[-1]
-                latest_room_code = str(latest_row["session_id"]).replace(".0", "").strip().split('.')[0]
+                latest_room_code = str(latest_row["session_id"]).strip().split('.')[0]
                 if str(input_session).strip().split('.')[0] != latest_room_code and str(input_session).strip() != "1234":
                     return False, f"Room {input_session} is closed. Try again.", ""
                 
                 if "period" in raw_resp.columns:
                     detected_assignment = str(latest_row["period"]).strip()
 
-            # Recover historical activity tracking state if student refreshes device
-            raw_resp["session_id"] = raw_resp["session_id"].astype(str).str.strip().apply(lambda x: x.split('.')[0])
-            raw_resp["student_id"] = raw_resp["student_id"].astype(str).str.strip().apply(lambda x: x.split('.')[0])
+            # Recover historical activity tracking state safely
+            raw_resp["session_id"] = raw_resp["session_id"].apply(lambda x: str(x).strip().split('.')[0])
+            raw_resp["student_id"] = raw_resp["student_id"].apply(lambda x: str(x).strip().split('.')[0])
             
             past_matches = raw_resp[(raw_resp["session_id"] == str(input_session).strip().split('.')[0]) & (raw_resp["student_id"] == clean_input_id)]
             st.session_state.answered_questions = set(past_matches["question"].astype(str).tolist())
