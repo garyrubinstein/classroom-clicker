@@ -275,31 +275,23 @@ else:
         else:
             st.info("System idle. Telemetry engine listening...")
 
-    # ==============================================================================
+   # ==============================================================================
     # [SECTION 06: DATA PROCESSING & CALCULATION ENGINE]
     # ==============================================================================
-    st.markdown("### 🔍 Live Cloud Data Stream Preview")
-    if not all_data_df.empty:
-        st.dataframe(all_data_df.head(10))
-    else:
-        st.info("The spreadsheet object returned from the cloud is currently empty.")
-
     if all_data_df.empty:
         st.info("Waiting for incoming responses... Submit answers via the bottom-docked simulator tool.")
     else:
         all_data_df["session_id"] = all_data_df["session_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         teacher_session_target = str(st.session_state.active_session_id).strip()
         
-        distinct_sessions = all_data_df["session_id"].unique()
         add_log(f"🔎 Filtering dataset. Active room target is '{teacher_session_target}'.")
-        
         df = all_data_df[all_data_df["session_id"] == teacher_session_target].copy()
         
         if df.empty:
             st.info(f"Session initialized. Join Code: **{st.session_state.active_session_id}**")
         else:
             df["is_correct"] = df["is_correct"].astype(str).str.upper().str.strip() == "TRUE"
-            df["student_id"] = df["student_id"].astype(str).str.strip()
+            df["student_id"] = df["student_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             clean_df = df.drop_duplicates(subset=["student_id", "question"], keep="last")
             
             student_aggregates = clean_df.groupby(["student_id", "student_name"]).agg(
@@ -332,8 +324,7 @@ else:
                 })
             
             final_students_df = pd.DataFrame(processed_records)
-            st.markdown(f"## Classroom Track: {st.session_state.active_period} (Code: {st.session_state.active_session_id})")
-            
+            st.markdown(f"## Classroom Track: {st.session_state.active_period} (Code: {st.session_state.active_session_id})")            
             # ==============================================================================
             # [SECTION 07: MAIN VIEWPORTS (TEACHER GRID & LIVE PACING GRAPH)]
             # ==============================================================================
