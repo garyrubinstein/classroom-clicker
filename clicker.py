@@ -110,3 +110,20 @@ if st.button("📤 Submit Clicker Action", use_container_width=True):
     elif not found_macro_url:
         st.error("Application configuration missing targeted Google App Script links.")
     else:
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            payload = {
+                "date": timestamp,
+                "period": "student_input",
+                "session_id": detected_live_session,
+                "student_id": clean_student_id,
+                "question": target_question,
+                "answer": student_choice,
+                "is_correct": mock_grading
+            }
+            
+            clean_url = str(found_macro_url).strip()
+            response = requests.post(clean_url, json=payload, timeout=5)
+            st.success(f"Response successfully broadcast! Sent choice '{student_choice}' for student '{roster_dict.get(clean_student_id, clean_student_id)}'.")
+        except Exception as e:
+            st.error(f"Network error encountered transmitting data packet: {e}")
