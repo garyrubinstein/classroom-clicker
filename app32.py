@@ -6,28 +6,20 @@ import random
 
 st.set_page_config(page_title="Clicker Mission Control", layout="centered")
 st.title("🎮 Clicker Mission Control")
-st.caption("Simplified Session Broadcaster with Dictionary Parsing")
+st.caption("Simplified Session Broadcaster - Precision Pathing")
 
-# 🔍 Safely extract the strings from the nested secrets block
-found_macro_url = None
-found_sheet_url = None
-
-# First check if the structured "gsheets" dictionary block exists
-if "gsheets" in st.secrets:
+# 🎯 Direct Laser-Target Extraction based on your real secrets layout
+try:
+    found_macro_url = st.secrets["connections"]["gsheets"]["macro_url"]
+    found_sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+except Exception:
     try:
-        found_macro_url = st.secrets["gsheets"].get("macro_url")
-        found_sheet_url = st.secrets["gsheets"].get("spreadsheet") or st.secrets["gsheets"].get("public_url")
+        # Fallback just in case "connections" gets bypassed
+        found_macro_url = st.secrets["gsheets"]["macro_url"]
+        found_sheet_url = st.secrets["gsheets"]["spreadsheet"]
     except Exception:
-        pass
-
-# Fallback: Scan top-level secrets if the block structure is flattened
-if not found_macro_url or not found_sheet_url:
-    for key in st.secrets.keys():
-        val = str(st.secrets[key])
-        if "script.google.com" in val:
-            found_macro_url = val
-        elif "docs.google.com/spreadsheets" in val:
-            found_sheet_url = val
+        found_macro_url = None
+        found_sheet_url = None
 
 # 🛒 Control Interface Selection
 selected_key = st.selectbox("📖 Select Assignment Tracker Key:", ["quiz_1", "quiz_2", "practice_set"])
@@ -51,13 +43,15 @@ if st.button("🚀 Broadcast New Session Code", use_container_width=True):
                 "answer": "0",
                 "is_correct": "TRUE"
             }
-            # Fire standard POST request using the isolated string link
-            response = requests.post(str(found_macro_url).strip(), json=payload, timeout=5)
+            # Strip any trailing whitespace or hidden string formatting artifacts
+            clean_url = str(found_macro_url).strip()
+            
+            response = requests.post(clean_url, json=payload, timeout=5)
             st.success(f"Broadcast sent! Code {new_code} is live on your sheet.")
         except Exception as e:
             st.error(f"Could not broadcast row via API: {e}")
     else:
-        st.warning(f"Code updated locally to {new_code}, but your macro_url could not be isolated.")
+        st.warning(f"Code updated locally to {new_code}, but your macro_url path could not be found.")
 
 # Broadcast Status Dashboard
 st.markdown("---")
@@ -85,8 +79,8 @@ st.code(str(found_sheet_url))
 
 if found_sheet_url:
     try:
-        base_url = found_sheet_url.split('/edit')[0] if '/edit' in found_sheet_url else found_sheet_url
-        csv_url = f"{base_url}/gviz/tq?tqx=out:csv"
+        base_url = str(found_sheet_url).split('/edit')[0] if '/edit' in str(found_sheet_url) else str(found_sheet_url)
+        csv_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv"
         
         raw_df = pd.read_csv(csv_url)
         st.metric("Total Rows Processed in Spreadsheet Log", len(raw_df))
