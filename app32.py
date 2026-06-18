@@ -67,9 +67,8 @@ with c1:
 with c2:
     st.metric("Target Assignment Key", selected_key)
 
-
 # ==============================================================================
-# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (AUTO-DETECT SESSION VERSION)
+# 👥 SECTION 3: CLEAN TEXT SCOREBOARD ENGINE (CACHE-BUSTING FORENSICS)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 👥 Active Student Scoreboard")
@@ -79,58 +78,67 @@ if not found_sheet_url:
 else:
     try:
         base_url = str(found_sheet_url).split('/edit')[0] if '/edit' in str(found_sheet_url) else str(found_sheet_url)
-        csv_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv"
+        
+        # 🚀 FORCE CACHE BUSTING: Append a unique time query parameter so Streamlit cannot reuse an old cached download
+        import time
+        cache_buster = int(time.time())
+        csv_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&tq_hi={cache_buster}"
         
         raw_df = pd.read_csv(csv_url)
         
-        processing_logs = []
-        processing_logs.append("⚙']. Running Scoreboard Engine with dynamic session tracking...")
+        # 🧾 FORENSICS SCANNER LOG
+        forensics_logs = []
+        forensics_logs.append("🔍 --- STARTING ACTIVE SESSION FORENSICS ---")
+        forensics_logs.append(f"⏱️ Network Token Generated: {cache_buster} (Ensures a 100% fresh sheet download)")
 
         # 🤝 ROSTER LOOKUP SYSTEM
         roster_dict = {}
         try:
-            roster_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=roster"
+            roster_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=roster&cb={cache_buster}"
             roster_df = pd.read_csv(roster_url)
             for _, r in roster_df.iterrows():
                 raw_id = str(r.iloc[0]).strip()
                 if raw_id.endswith('.0'): raw_id = raw_id[:-2]
                 roster_dict[raw_id] = str(r.iloc[1]).strip()
         except:
-            try:
-                fallback_url = f"{base_url.strip()}/gviz/tq?tqx=out:csv&sheet=answers"
-                fb_df = pd.read_csv(fallback_url)
-                for _, r in fb_df.iterrows():
-                    raw_id = str(r.iloc[0]).strip()
-                    if raw_id.endswith('.0'): raw_id = raw_id[:-2]
-                    roster_dict[raw_id] = str(r.iloc[1]).strip()
-            except:
-                pass
+            pass
 
         if raw_df.empty:
             st.info("No data found in the spreadsheet yet.")
         else:
-            # 🎯 AUTO-DETECT LIVE SESSION CODE FROM THE BOTTOM ROW OF THE SHEET
-            # Column index 2 is the session_id column
+            forensics_logs.append(f"📊 Total Rows loaded into current memory state: {len(raw_df)}")
+            
+            # Extract and log the actual literal text strings from the bottom 3 rows of your sheet
+            forensics_logs.append("📋 LITERAL VALUES SEEN AT THE BOTTOM OF THE SHEET:")
+            for offset in range(min(3, len(raw_df)), 0, -1):
+                idx = len(raw_df) - offset
+                row_session = str(raw_df.iloc[idx, 2]).strip()
+                row_student = str(raw_df.iloc[idx, 3]).strip()
+                row_question = str(raw_df.iloc[idx, 4]).strip()
+                forensics_logs.append(f"   👉 Row [-{offset}] (Index {idx}): Session='{row_session}', Student='{row_student}', Question='{row_question}'")
+
+            # Extract live session ID code from the bottom row
             last_row_session = str(raw_df.iloc[-1, 2]).strip()
             if last_row_session.endswith('.0'):
                 last_row_session = last_row_session[:-2]
                 
-            # Use the sheet's latest code as priority, fallback to session_state if sheet is unreadable
+            # Session assignment logic
             if last_row_session and last_row_session != "nan" and last_row_session != "session_id":
                 target_code = last_row_session
-                processing_logs.append(f"📡 Auto-Detected Live Session Code from bottom sheet row: **{target_code}**")
+                forensics_logs.append(f"✅ Selected target code via bottom-row detection: **{target_code}**")
             else:
                 target_code = str(st.session_state.active_code).strip()
-                processing_logs.append(f"⚠️ Fallback to Control Panel Session Code: **{target_code}**")
+                forensics_logs.append(f"⚠️ Bottom row code invalid. Falling back to local state code: **{target_code}**")
 
             st.info(f"📊 Displaying Live Statistics for Session Code: **{target_code}**")
 
-            # Clean and match session column rows
+            # Filter data frame rows matching our target code
             session_col = raw_df.iloc[:, 2].astype(str).str.strip()
             if session_col.str.endswith('.0').any():
                 session_col = session_col.apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 
             filtered_df = raw_df[session_col == target_code].copy()
+            forensics_logs.append(f"🎯 Rows found matching target code '{target_code}': {len(filtered_df)}")
             
             if not filtered_df.empty:
                 room_set_mask = filtered_df.iloc[:, 4].astype(str).str.upper() == "ROOM_SET"
@@ -139,53 +147,29 @@ else:
             if filtered_df.empty:
                 st.info(f"No student clicks recorded yet for Session Code **{target_code}**.")
             else:
-                # Normalize text fields and safely handle trailing floating points
                 filtered_df['s_id'] = filtered_df.iloc[:, 3].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 filtered_df['q_id'] = filtered_df.iloc[:, 4].astype(str).str.strip().apply(lambda x: x[:-2] if x.endswith('.0') else x)
-                
-                # Check absolute evaluation conditions
                 filtered_df['is_true'] = filtered_df.iloc[:, 6].astype(str).str.upper().str.strip().isin(["TRUE", "1", "1.0"])
                 
-                # Deduplicate to evaluate only the final press
                 clean_df = filtered_df.drop_duplicates(subset=["s_id", "q_id"], keep="last")
                 
-                # 🛠️ VISUAL INSPECTION GRID
-                st.write("#### 🔍 Row-by-Row Evaluation Diagnostic Matrix")
-                debug_matrix = pd.DataFrame({
-                    "Student ID": clean_df['s_id'],
-                    "Name Lookup": clean_df['s_id'].map(roster_dict),
-                    "Question": clean_df['q_id'],
-                    "Raw Text in Answer Col (Idx 5)": clean_df.iloc[:, 5].astype(str),
-                    "Raw Text in Correct Col (Idx 6)": clean_df.iloc[:, 6].astype(str),
-                    "Python Interpretation Result": clean_df['is_true'].map({True: "✅ counted as CORRECT", False: "❌ counted as WRONG"})
-                })
-                st.dataframe(debug_matrix, use_container_width=True)
-                st.markdown("---")
-
                 # Math Processing
-                summary = clean_df.groupby("s_id").agg(
-                    correct=("is_true", "sum"),
-                    total=("q_id", "nunique")
-                ).reset_index()
+                summary = clean_df.groupby("s_id").agg(correct=("is_true", "sum"), total=("q_id", "nunique")).reset_index()
                 
-                # Render Clean Scoreboard Text
                 for _, row in summary.iterrows():
                     student_key = str(row['s_id'])
                     student_display_name = roster_dict.get(student_key, student_key)
-                    
                     total_answered = int(row["total"])
                     correct_answers = int(row["correct"])
-                    
                     pct = int((correct_answers / total_answered) * 100) if total_answered > 0 else 0
                     st.markdown(f"👤 **{student_display_name}** — Accuracy: `{pct}%` ({correct_answers}/{total_answered} correct)")
                     
-        with st.expander("📝 View Scoreboard Processing Engine Log", expanded=True):
-            for log in processing_logs:
+        with st.expander("📝 View Caching & Session Code Forensics Log", expanded=True):
+            for log in forensics_logs:
                 st.text(log)
                     
     except Exception as e:
         st.error(f"Scoreboard Engine execution fault: {e}")
-
 
 
 # ==============================================================================
