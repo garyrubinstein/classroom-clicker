@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Safe auto-installer for required network packages
+# 1. RUN AUTO-INSTALLER FIRST (Before standard imports look for them)
 try:
     import gspread
     from oauth2client.service_account import ServiceAccountCredentials
@@ -10,6 +10,7 @@ except ModuleNotFoundError:
     import gspread
     from oauth2client.service_account import ServiceAccountCredentials
 
+# 2. STANDARD APP IMPORTS
 import streamlit as st
 import pandas as pd
 import datetime
@@ -19,7 +20,7 @@ st.set_page_config(page_title="Clicker Mission Control", layout="centered")
 st.title("🎮 Clicker Mission Control")
 st.caption("Minimalist Session Broadcaster & Live Data Preview")
 
-# 📡 Isolated Cloud Connection Engine
+# 📡 Cloud Workbook Storage Connection
 @st.cache_data(ttl=3)
 def get_workbook_data():
     try:
@@ -28,7 +29,7 @@ def get_workbook_data():
         client = gspread.authorize(creds)
         workbook = client.open_by_key(st.secrets["google_sheets"]["sheet_id"])
         
-        # Grab raw values cleanly to show in the debug console
+        # Pull raw rows to display safely in the debug console
         raw_rows = workbook.worksheet("responses").get_all_values()
         df = pd.DataFrame(raw_rows) if raw_rows else pd.DataFrame()
         return df, workbook
@@ -38,7 +39,7 @@ def get_workbook_data():
 
 raw_data_df, workbook = get_workbook_data()
 
-# Load Assignment Keys from your Answers Tab headers if available
+# Pull layout assignment options safely from the answers tab headers
 assignment_options = ["quiz_1", "quiz_2", "practice_set"]
 if workbook:
     try:
@@ -51,7 +52,7 @@ if workbook:
     except:
         pass
 
-# 🛒 Session Selection Interface
+# 🛒 Control Interface Selection
 selected_key = st.selectbox("📖 Select Assignment Tracker Key:", assignment_options)
 
 if "active_code" not in st.session_state:
@@ -63,13 +64,13 @@ if st.button("🚀 Broadcast New Session Code", use_container_width=True):
     
     if workbook:
         try:
-            # 1. Update active_session tracking channel
+            # Update the active_session spreadsheet loop
             session_ws = workbook.worksheet("active_session")
             session_ws.clear()
             session_ws.append_row(["session_id", "active_assignment"])
             session_ws.append_row([new_code, selected_key])
             
-            # 2. Append anchor handshake row to responses
+            # Append network handshake marker to incoming rows
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             responses_ws = workbook.worksheet("responses")
             responses_ws.append_row([timestamp, selected_key, new_code, "SERVER", "ROOM_SET", "0", "TRUE"])
@@ -80,7 +81,7 @@ if st.button("🚀 Broadcast New Session Code", use_container_width=True):
         except Exception as e:
             st.error(f"Failed to write to Google Sheets: {e}")
 
-# Status Indicators
+# Broadcast Status Dashboard
 st.markdown("---")
 c1, c2 = st.columns(2)
 with c1:
@@ -89,23 +90,22 @@ with c2:
     st.metric("Target Assignment Key", selected_key)
 
 # ==============================================================================
-# 🛠️ REAL-TIME DATA PREVIEW CONSOLE (SAFE & CRASH-PROOF)
+# 🛠️ REAL-TIME DATA PREVIEW CONSOLE
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 📋 Live Spreadsheet Console")
-st.caption("This shows you exactly what row data is sitting in your Google Sheet right now.")
+st.caption("Verifies raw rows currently recorded in your Google Sheet.")
 
 if st.button("🔄 Refresh Console View", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
 if raw_data_df.empty:
-    st.warning("No rows found or spreadsheet is empty.")
+    st.warning("No rows found or spreadsheet data is unreadable.")
 else:
     st.metric("Total Rows in Spreadsheet Data Log", len(raw_data_df) - 1 if len(raw_data_df) > 0 else 0)
     
     st.write("**Most Recent 10 Rows Appended to Google Sheets:**")
-    # Display the headers + the last 10 rows safely without changing data types
     header_row = raw_data_df.iloc[0]
     last_rows = raw_data_df.tail(10)
     
