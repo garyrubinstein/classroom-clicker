@@ -281,12 +281,18 @@ else:
     if all_data_df.empty:
         st.info("Waiting for incoming responses... Submit answers via the connected student remote.")
     else:
+        # Strictly enforce lowercase, clean headers right at the source
+        all_data_df.columns = [str(c).strip().lower().replace(" ", "_") for c in all_data_df.columns]
+        
         # Standardize session strings to match flawlessly
         all_data_df["session_id"] = all_data_df["session_id"].astype(str).str.strip().apply(lambda x: x.split('.')[0])
         teacher_session_target = str(st.session_state.active_session_id).strip().split('.')[0]
         
         add_log(f"🔎 Filtering dataset. Target room search key is: '{teacher_session_target}'.")
         df = all_data_df[all_data_df["session_id"] == teacher_session_target].copy()
+        
+        # Filter out the server setup rows so they don't look like actual students
+        df = df[df["question"].astype(str).str.upper() != "ROOM_SET"]
         
         if df.empty:
             st.info(f"Session initialized. Awaiting student logins... Join Code: **{st.session_state.active_session_id}**")
@@ -313,7 +319,7 @@ else:
             sorted_questions = sorted([q for q in raw_questions if q.startswith('Q')], key=lambda x: int(x[1:]) if x[1:].isdigit() else 0)
             if not sorted_questions: sorted_questions = [f"Q{i}" for i in range(1, 11)]
 
-            # Drop duplicates to lock on the most recent submission per question
+            # Drop duplicates to lock on the most recent submission per student per question
             clean_df = df.drop_duplicates(subset=["student_id", "question"], keep="last")
             
             student_aggregates = clean_df.groupby(["student_id", "student_name"]).agg(
@@ -357,7 +363,7 @@ else:
                     if student["color_style"] == "rainbow-card":
                         st.markdown(f"""
                         <div class="rainbow-card">
-                            <div style="font-size:24px; font-weight:bold; margin-bottom:5px;">🥇 {student['student_name'].upper()}</div>
+                            <div style="font-size:24px; font-weight:bold; margin-bottom:5px;">🥇 {str(student['student_name']).upper()}</div>
                             <div style="font-size:14px; opacity:0.9;">STUDENT ID: {student['student_id']}</div>
                             <hr style="margin:10px 0; border-color:rgba(255,255,255,0.3);">
                             <div style="font-size:36px; font-weight:bold; text-align:center; margin:10px 0;">{student['display_pct']}%</div>
@@ -403,7 +409,16 @@ else:
                 return "font-weight: bold; background-color: #2c3e50; color: #ecf0f1;"
 
             st.dataframe(
-                matrix_df.style.applymap(color_pacing_cells),
+                matrix_df.style.map(color_pacing_cells),
                 use_container_width=True,
                 hide_index=True
             )
+
+# ==============================================================================
+# [SECTION 09: BACKSTAGE SYSTEM SIMULATION AND TESTING PLATFORM]
+# ==============================================================================
+st.markdown("---")
+with st.expander("🛠️ Teacher Backstage Dev Logs", expanded=False):
+    st.caption("Active event monitoring stream:")
+    for log_item in reversed(st.session_state.app_logs[-15:]):
+        st.text(log_item)
