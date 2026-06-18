@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
 import re
 from datetime import datetime
@@ -7,20 +8,20 @@ from datetime import datetime
 # ==============================================================================
 # 📋 PROJECT VERSION LOG
 # ==============================================================================
-# Version Name: clicker.py (Student Qwizdom Clicker - Iteration 2: State Machine)
-# Features: Persistent session state login, automatic spreadsheet validation,
-#           and an automatic interface switch once authenticated.
+# Version Name: clicker.py (Student Qwizdom Clicker - Iteration 4: Auto-Grading Engine)
+# Features: Reads assignment key from the ROOM_SET row, downloads answer values,
+#           and calculates absolute correctness before firing webhooks.
 # ==============================================================================
 
 st.set_page_config(page_title="Student Qwizdom Remote", layout="centered")
 
-# Initialize persistent session states for the student's device
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if "student_id" not in st.session_state: st.session_state.student_id = ""
 if "session_id" not in st.session_state: st.session_state.session_id = ""
 if "student_name" not in st.session_state: st.session_state.student_name = ""
+if "active_assignment" not in st.session_state: st.session_state.active_assignment = "default_assignment"
+if "answer_key_dict" not in st.session_state: st.session_state.answer_key_dict = {}
 
-# --- CUSTOM TACTILE QWIZDOM REMOTE CSS ---
 st.markdown("""
 <style>
 .lcd-screen {
@@ -37,8 +38,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper function to fetch roster directly from the shared sheet
-def verify_credentials_against_cloud(input_session, input_id):
+def verify_and_pull_grading_rules(input_session, input_id):
     try:
         sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
@@ -53,8 +53,6 @@ def verify_credentials_against_cloud(input_session, input_id):
         if "roster" in xl.sheet_names:
             raw_roster = xl.parse(sheet_name="roster")
             raw_roster.columns = [str(c).strip().lower() for c in raw_roster.columns]
-            
-            # Find ID column and Name column dynamically
             id_col = [c for c in raw_roster.columns if "id" in c or "code" in c]
             name_col = [c for c in raw_roster.columns if "name" in c or "student" in c and c != id_col]
             
@@ -65,39 +63,54 @@ def verify_credentials_against_cloud(input_session, input_id):
                     return False, "ID not found in active roster.", ""
                 student_name_found = str(match_row.iloc[0][name_col[0]]).strip()
         
-        # 2. Verify Session ID against responses history to check what room is valid
-        if "responses" in xl.sheet_names:
-            raw_resp = xl.parse(sheet_name="responses")
-            raw_resp.columns = [str(c).strip().lower().replace(" ", "_") for c in raw_resp.columns]
-            if "session_id" in raw_resp.columns:
-                raw_resp["session_id"] = raw_resp["session_id"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                valid_sessions = raw_resp["session_id"].unique()
-                # If the session code exists anywhere in history, we trust it for this bypass iteration
-                if str(input_session).strip() not in valid_sessions and str(input_session).strip() != "1234":
-                    return False, f"Room Code {input_session} is currently closed or offline.", ""
-
+        # 2. Extract Session and Find Target Assignment Column
+        target_tab = "responses" if "responses" in xl.sheet_names else xl.sheet_names[0]
+        raw_resp = xl.parse(sheet_name=target_tab)
+        raw_resp.columns = [str(c).strip().lower().replace(" ", "_") for c in raw_resp.columns]
+        
+        detected_assignment = "default_assignment"
+        if "question" in raw_resp.columns and "session_id" in raw_resp.columns:
+            config_rows = raw_resp[raw_resp["question"].astype(str).str.upper() == "ROOM_SET"]
+            if not config_rows.empty:
+                latest_row = config_rows.iloc[-1]
+                latest_room_code = str(latest_row["session_id"]).replace(".0", "").strip()
+                if str(input_session).strip() != latest_room_code and str(input_session).strip() != "1234":
+                    return False, f"Room {input_session} is closed. Try again.", ""
+                
+                # Snatch the running period/assignment column assigned by the teacher app!
+                if "period" in raw_resp.columns:
+                    detected_assignment = str(latest_row["period"]).strip()
+        
+        # 3. Cache the values of the target Answer Key column onto the local device memory
+        parsed_key = {}
+        if "answers" in xl.sheet_names:
+            answers_df = xl.parse(sheet_name="answers")
+            answers_df.columns = [str(c).strip() for c in answers_df.columns]
+            answers_df["QUESTION"] = [f"Q{i+1}" for i in range(len(answers_df))]
+            
+            target_key_col = detected_assignment if detected_assignment in answers_df.columns else answers_df.columns[0]
+            parsed_key = dict(zip(answers_df["QUESTION"], pd.to_numeric(answers_df[target_key_col], errors='coerce').fillna(0.0)))
+            
+        st.session_state.active_assignment = detected_assignment
+        st.session_state.answer_key_dict = parsed_key
         return True, "Success", student_name_found
     except Exception as e:
-        return False, f"Cloud verification failed: {e}", ""
+        return False, f"Cloud sync failed: {e}", ""
 
-
-# --- CONSOLE CONDITIONALS (STATE MACHINE) ---
-
-# PHASE 1: THE LOCK SCREEN
+# --- CONSOLE INTERFACE ---
 if not st.session_state.authenticated:
-    st.markdown('<div class="lcd-screen">📟 QWIZDOM REMOTE V1.1<br>STATUS: LOCKED // ENTER ROOM</div>', unsafe_allow_html=True)
+    st.markdown('<div class="lcd-screen">📟 QWIZDOM REMOTE V1.4<br>STATUS: LOCKED // ENTER ROOM</div>', unsafe_allow_html=True)
     st.title("🔒 Join Classroom Session")
     
-    room_code = st.text_input("Enter 4-Digit Session Code", max_chars=4, placeholder="e.g. 3564")
-    student_id = st.text_input("Enter Your Student ID", max_chars=6, placeholder="e.g. 4000")
+    room_code = st.text_input("Enter 4-Digit Session Code", max_chars=4)
+    student_id = st.text_input("Enter Your Student ID", max_chars=6)
     
     if st.button("CONNECT TO ROOM", use_container_width=True):
         if not room_code or not student_id:
-            st.error("Please fill out both entry slots.")
+            st.error("Please fill out both slots.")
         else:
-            with st.spinner("Authenticating remote connection..."):
-                is_valid, msg, s_name = verify_credentials_against_cloud(room_code, student_id)
-                
+            with st.spinner("Syncing grading criteria..."):
+                is_valid, msg, s_name = verify_and_pull_grading_rules(room_code, student_id)
                 if is_valid:
                     st.session_state.authenticated = True
                     st.session_state.session_id = str(room_code).strip()
@@ -107,50 +120,58 @@ if not st.session_state.authenticated:
                     st.rerun()
                 else:
                     st.error(f"Access Denied: {msg}")
-
-# PHASE 2: THE ACTIVE CLICKER KEYPAD
 else:
-    # Top display screen dynamically changing text colors based on state
-    lcd_text = f"📟 RM: {st.session_state.session_id} | ID: {st.session_state.student_id}<br>USER: {st.session_state.student_name.upper()}"
+    lcd_text = f"📟 RM: {st.session_state.session_id} | KEY: {st.session_state.active_assignment}<br>USER: {st.session_state.student_name.upper()}"
     st.markdown(f'<div class="lcd-screen">{lcd_text}</div>', unsafe_allow_html=True)
     
     st.title("📱 Active Clicker Remote")
     
-    # Simple input selectors for active submissions
-    sim_q = st.selectbox("Active Question Target", options=[f"Q{i}" for i in range(1, 11)])
+    # Question selector choices map directly to keys loaded onto device memory
+    q_options = list(st.session_state.answer_key_dict.keys()) if st.session_state.answer_key_dict else [f"Q{i}" for i in range(1, 11)]
+    sim_q = st.selectbox("Active Question Target", options=q_options)
     sim_ans = st.number_input("Your Numeric Response Value", value=0.0, step=0.1)
     
     st.markdown("---")
-    
     col_send, col_exit = st.columns([4, 1])
     
     with col_send:
         if st.button("🚀 TRANSMIT ANSWER", use_container_width=True, type="primary"):
+            
+            # --- LOCAL ACTIVE GRADING ENGINE ---
+            # Retrieve the correct answer from local device memory cache
+            correct_ans_target = st.session_state.answer_key_dict.get(sim_q, None)
+            
+            if correct_ans_target is not None:
+                # Math grade execution checks if input matches key within small float epsilon
+                grade_evaluation = bool(np.isclose(sim_ans, correct_ans_target))
+            else:
+                grade_evaluation = False
+                
             timestamp_payload = {
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                "period": "Period 1", 
+                "period": str(st.session_state.active_assignment), 
                 "session_id": str(st.session_state.session_id), 
                 "student_id": str(st.session_state.student_id),
                 "question": str(sim_q), 
                 "answer": float(sim_ans), 
-                "is_correct": True 
+                "is_correct": grade_evaluation # Fires actual calculation out to spreadsheet!
             }
-            
             try:
                 macro_link = st.secrets["connections"]["gsheets"]["macro_url"]
                 response = requests.post(macro_link, json=timestamp_payload)
                 if response.status_code == 200:
-                    st.toast(f"🎯 Broadcast sent for {sim_q}!", icon="✅")
+                    status_text = "CORRECT! 🎉" if grade_evaluation else "SUBMITTED! 👍"
+                    st.toast(f"🎯 {sim_q}: {status_text}", icon="✅")
                 else:
-                    st.error("Failed to drop entry row.")
+                    st.error("Failed to register answer row.")
             except Exception as e:
                 st.error(f"Transmission error: {e}")
                 
     with col_exit:
-        # Emergency logout / reset button to turn remote back off or switch seats
         if st.button("❌ RESET", use_container_width=True):
             st.session_state.authenticated = False
             st.session_state.session_id = ""
             st.session_state.student_id = ""
             st.session_state.student_name = ""
+            st.session_state.answer_key_dict = {}
             st.rerun()
